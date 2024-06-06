@@ -7,9 +7,9 @@ from mastodon import Mastodon
 
 
 mastodon = Mastodon(
-    client_id='YOUR_API_KEY_HERE',
-    client_secret='YOUR_API_KEY_HERE',
-    access_token='YOUR_API_KEY_HERE',
+    client_id='YOUR_API_KEY',
+    client_secret='YOUR_API_KEY',
+    access_token='YOUR_API_KEY',
     api_base_url='https://masto.globaleas.org'
 
 
@@ -18,14 +18,14 @@ mastodon = Mastodon(
 
 # Configure the Twitter client
 client = tweepy.Client(
-    consumer_key="YOUR_API_KEY_HERE",
-    consumer_secret="YOUR_API_KEY_HERE",
-    access_token="YOUR_API_KEY_HEREYOUR_API_KEY_HERE",
-    access_token_secret="YOUR_API_KEY_HERE"
+    consumer_key="YOUR_API_KEY",
+    consumer_secret="YOUR_API_KEY",
+    access_token="YOUR_API_KEY",
+    access_token_secret="YOUR_API_KEY"
 )
 
 def fetch_weather_data():
-    url = "https://swd.weatherflow.com/swd/rest/observations/station/118444?token=YOUR_KEY_HERE"
+    url = "https://swd.weatherflow.com/swd/rest/observations/station/118444?token=YOUR_API_KEY"
     try:
         response = requests.get(url)
         response.raise_for_status()
@@ -77,11 +77,11 @@ def post_tweet():
     if "Failed" not in weather_data:
         try:
             client.create_tweet(text=weather_data)
-            print("Weather data posted on Twitter!")
+            print("Weather data posted on Twitter and Mastodon!")
         except tweepy.HTTPException as e:
             print(f"Failed to post tweet due to API error: {e}")
         except tweepy.TweepyException as e:
-            print(f"Failed to post tweet: {e}")
+            print(f"Failed to post tweet and toot: {e}")
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
     else:
@@ -92,6 +92,4 @@ def post_tweet():
 weather_message = fetch_weather_data()
 mastodon.toot(weather_message)
 post_tweet()
-
-
 
