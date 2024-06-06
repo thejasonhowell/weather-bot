@@ -25,7 +25,7 @@ client = tweepy.Client(
 )
 
 def fetch_weather_data():
-    url = "https://swd.weatherflow.com/swd/rest/observations/station/118444?token=227e33d9-a2eb-47bb-9392-406b888555e2"
+    url = "https://swd.weatherflow.com/swd/rest/observations/station/118444?token=YOUR_KEY_HERE"
     try:
         response = requests.get(url)
         response.raise_for_status()
