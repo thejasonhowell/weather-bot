@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
+import requests
 import tweepy
-import requests
-import requests
 from mastodon import Mastodon
-
-
 
 mastodon = Mastodon(
     client_id='YOUR_API_KEY',
