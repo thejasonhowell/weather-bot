@@ -3,8 +3,6 @@ import tweepy
 import requests
 from mastodon import Mastodon
 
-
-
 mastodon = Mastodon(
     client_id='YOUR_API_KEY_HERE',
     client_secret='YOUR_API_KEY_HERE',
@@ -86,11 +84,17 @@ def post_tweet():
     else:
         print(weather_data)
 
+def send_heartbeat():
+    url = "https://uptime.betterstack.com/api/v1/heartbeat/HEARTBEATURL"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        print("Heartbeat sent successfully!")
+    except requests.RequestException as e:
+        print(f"Failed to send heartbeat: {str(e)}")
 
 # Post the weather data
 weather_message = fetch_weather_data()
 mastodon.toot(weather_message)
 post_tweet()
-
-
-
+send_heartbeat()
