@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e90a20d4-7685-42f8-ad36-885a2aef12cd" name="Changes" comment="fixed things">
+    <list default="true" id="e90a20d4-7685-42f8-ad36-885a2aef12cd" name="Changes" comment="added sending heartbeat to betterstack">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
@@ -42,6 +42,9 @@
       </UrlAndAccount>
     </option>
   </component>
+  <component name="ProblemsViewState">
+    <option name="selectedTabId" value="CurrentFile" />
+  </component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 1
 }</component>
@@ -58,6 +61,7 @@
     &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
     &quot;git-widget-placeholder&quot;: &quot;master&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/thejasonhowell/Library/Mobile Documents/com~apple~CloudDocs/Coding&quot;,
     &quot;settings.editor.selected.configurable&quot;: &quot;settings.sync&quot;
   },
   &quot;keyToStringList&quot;: {
@@ -67,6 +71,16 @@
     ]
   }
 }</component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/../../../../Mobile Documents/com~apple~CloudDocs/Coding" />
+      <recent name="$PROJECT_DIR$/.." />
+      <recent name="$PROJECT_DIR$" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$" />
+    </key>
+  </component>
   <component name="RunManager">
     <configuration name="main" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
       <module name="PeoriaWeatherBot" />
@@ -131,7 +145,15 @@
       <option name="project" value="LOCAL" />
       <updated>1717719709464</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="added sending heartbeat to betterstack">
+      <option name="closed" value="true" />
+      <created>1717980140481</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1717980140481</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -149,6 +171,7 @@
     <MESSAGE value="remove API keys" />
     <MESSAGE value="extraneous import removed" />
     <MESSAGE value="fixed things" />
-    <option name="LAST_COMMIT_MESSAGE" value="fixed things" />
+    <MESSAGE value="added sending heartbeat to betterstack" />
+    <option name="LAST_COMMIT_MESSAGE" value="added sending heartbeat to betterstack" />
   </component>
 </project>
