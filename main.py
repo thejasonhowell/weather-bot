@@ -99,7 +99,7 @@ def post_tweet():
         print(weather_data)
 
 def send_heartbeat():
-    url = "https://uptime.betterstack.com/api/v1/heartbeat/tsfFKTmZJnVDqLXieELczt1r"
+    url = "https://uptime.betterstack.com/api/v1/heartbeat/YOUR_API_KEY"
     try:
         response = requests.get(url)
         response.raise_for_status()
