@@ -4,7 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e90a20d4-7685-42f8-ad36-885a2aef12cd" name="Changes" comment="added sending heartbeat to betterstack">
+    <list default="true" id="e90a20d4-7685-42f8-ad36-885a2aef12cd" name="Changes" comment="added dynamic precip. if it's above 32? precip displays as rain. below 32? precip displays and is converted to snow.">
+      <change afterPath="$PROJECT_DIR$/weatheralerts.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/weatherforecast.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/PeoriaWeatherBot.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/PeoriaWeatherBot.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
@@ -16,6 +20,13 @@
   <component name="ExportToHTMLSettings">
     <option name="printScope" value="1" />
     <option name="OUTPUT_DIRECTORY" value="$PROJECT_DIR$/exportToHTML" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
   </component>
   <component name="Git.Settings">
     <option name="PUSH_AUTO_UPDATE" value="true" />
@@ -34,14 +45,12 @@
     &quot;assignee&quot;: &quot;thejasonhowell&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings">
-    <option name="selectedUrlAndAccountId">
-      <UrlAndAccount>
-        <option name="accountId" value="2afe4b0c-659d-472e-af25-9afd6e5d63d5" />
-        <option name="url" value="https://github.com/thejasonhowell/Weather-Bot.git" />
-      </UrlAndAccount>
-    </option>
-  </component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/thejasonhowell/Weather-Bot.git&quot;,
+    &quot;accountId&quot;: &quot;4c72e5eb-1039-4f26-bd10-87a4237d89d7&quot;
+  }
+}</component>
   <component name="ProblemsViewState">
     <option name="selectedTabId" value="CurrentFile" />
   </component>
@@ -57,17 +66,27 @@
   <component name="PropertiesComponent">{
   &quot;keyToString&quot;: {
     &quot;ASKED_ADD_EXTERNAL_FILES&quot;: &quot;true&quot;,
+    &quot;Python.UDPlistener.executor&quot;: &quot;Run&quot;,
     &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.scratch youtube.executor&quot;: &quot;Run&quot;,
+    &quot;Python.scratch.executor&quot;: &quot;Run&quot;,
+    &quot;Python.scratch_1.executor&quot;: &quot;Run&quot;,
+    &quot;Python.scratch_2.executor&quot;: &quot;Run&quot;,
+    &quot;Python.scratch_weatheralerts.executor&quot;: &quot;Run&quot;,
+    &quot;Python.weatheralerts.executor&quot;: &quot;Run&quot;,
+    &quot;Python.weatherforecast.executor&quot;: &quot;Run&quot;,
+    &quot;Python.work in progress.executor&quot;: &quot;Run&quot;,
     &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
     &quot;git-widget-placeholder&quot;: &quot;master&quot;,
-    &quot;last_opened_file_path&quot;: &quot;/Users/thejasonhowell/Library/Mobile Documents/com~apple~CloudDocs/Coding&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;settings.sync&quot;
+    &quot;last_opened_file_path&quot;: &quot;/Users/thejasonhowell/Library/CloudStorage/OneDrive-Personal/Coding/PeoriaWeatherBot&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;reference.settings.ide.settings.web.browsers&quot;
   },
   &quot;keyToStringList&quot;: {
     &quot;com.intellij.ide.scratch.ScratchImplUtil$2/New Scratch File&quot;: [
-      &quot;TEXT&quot;,
-      &quot;Python&quot;
+      &quot;Python&quot;,
+      &quot;TEXT&quot;
     ]
   }
 }</component>
@@ -108,7 +127,7 @@
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-python-sdk-d68999036c7f-d3b881c8e49f-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-233.14475.56" />
+        <option value="bundled-python-sdk-495700d161d3-aa17d162503b-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-243.22562.220" />
       </set>
     </attachedChunks>
   </component>
@@ -153,7 +172,47 @@
       <option name="project" value="LOCAL" />
       <updated>1717980140481</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="running code through GPT o1">
+      <option name="closed" value="true" />
+      <created>1726886527798</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1726886527798</updated>
+    </task>
+    <task id="LOCAL-00006" summary="running code through GPT o1">
+      <option name="closed" value="true" />
+      <created>1728069747012</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1728069747012</updated>
+    </task>
+    <task id="LOCAL-00007" summary="fix">
+      <option name="closed" value="true" />
+      <created>1728070076817</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1728070076817</updated>
+    </task>
+    <task id="LOCAL-00008" summary="added bluesky">
+      <option name="closed" value="true" />
+      <created>1731006924746</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1731006924746</updated>
+    </task>
+    <task id="LOCAL-00009" summary="added dynamic precip. if it's above 32? precip displays as rain. below 32? precip displays and is converted to snow.">
+      <option name="closed" value="true" />
+      <created>1735328688842</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1735328688842</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -172,6 +231,10 @@
     <MESSAGE value="extraneous import removed" />
     <MESSAGE value="fixed things" />
     <MESSAGE value="added sending heartbeat to betterstack" />
-    <option name="LAST_COMMIT_MESSAGE" value="added sending heartbeat to betterstack" />
+    <MESSAGE value="running code through GPT o1" />
+    <MESSAGE value="fix" />
+    <MESSAGE value="added bluesky" />
+    <MESSAGE value="added dynamic precip. if it's above 32? precip displays as rain. below 32? precip displays and is converted to snow." />
+    <option name="LAST_COMMIT_MESSAGE" value="added dynamic precip. if it's above 32? precip displays as rain. below 32? precip displays and is converted to snow." />
   </component>
 </project>
