@@ -346,7 +346,7 @@ def scheduler():
                 if minute % 30 == 0:
                     post_tweet(weather_message)
 
-        # Send a heartbeat every 30 minutes
+        # Send a heartbeat at each 30-minute mark
         if minute % 30 == 0:
             send_heartbeat()
 
