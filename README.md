@@ -69,4 +69,4 @@ It saves a rolling 24-hour log of rain and lightning data for cumulative calcula
 Manual updates can be triggered via a Unix signal (SIGUSR1).
 <br>
 <br>📜 License
-MIT License — Free for personal and commercial use.
+GPL-3.0 License — Free software, you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
