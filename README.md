@@ -18,7 +18,7 @@ Posts Weather Reports To:
 <br><br>Heartbeat: Sends a ping to BetterStack every 30 minutes to confirm the bot is alive.
 <br><br>Manual Update: Send a SIGUSR1 signal to trigger an immediate weather update.
 <br>Local Storage: Maintains a rolling 24-hour log (weatherdata.json) to calculate total rainfall and lightning strikes over the past day.
-🛡<br><br>️ Security
+<br><br>️🛡Security
 No hardcoded API keys — all sensitive information is loaded from a .env file.
 HTTPS connections to external APIs.
 Local only logging — no external database or cloud storage.
