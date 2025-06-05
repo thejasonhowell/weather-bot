@@ -329,7 +329,7 @@ def post_tweet(weather_message):
 
 # Heartbeat function to signal the bot is active
 def send_heartbeat():
-    url = "https://uptime.betterstack.com/api/v1/heartbeat/tsfFKTmZJnVDqLXieELczt1r"
+    url = os.getenv("BETTERSTACK_HEARTBEAT_URL")
     try:
         requests.get(url).raise_for_status()
         logging.info("Heartbeat sent successfully!")
