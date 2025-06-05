@@ -1,4 +1,7 @@
-🌦️ Peoria Weather Bot 
+![License](https://img.shields.io/github/license/thejasonhowell/weather-bot)
+![Last Commit](https://img.shields.io/github/last-commit/thejasonhowell/weather-bot)
+
+🌦️ Peoria Weather Bot
 <br>
 This is an automated weather bot that fetches real-time weather data from a WeatherFlow station and posts updates to social media platforms like Mastodon, Bluesky, Telegram, and Twitter. It’s designed for reliable, hands-off operation with simple manual overrides.
 
