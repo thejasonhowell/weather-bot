@@ -62,14 +62,14 @@ To manually trigger a weather update while the bot is running, send a SIGUSR1 si
 ps aux | grep main.py
 kill -USR1 <PID>
     
-📦 Requirements
-Python 3.10+
-tweepy - Twitter API client
-requests - HTTP library
-mastodon.py - Mastodon API client
-python-dotenv - Loads environment variables from .env file
-telegram - Telegram Bot API
-bsky-bridge - Bluesky API bridge
+📦 Requirements<br>
+Python 3.10+<br>
+tweepy - Twitter API client<br>
+requests - HTTP library<br>
+mastodon.py - Mastodon API client<br>
+python-dotenv - Loads environment variables from .env file<br>
+telegram - Telegram Bot API<br>
+bsky-bridge - Bluesky API bridge<br>
 ⚙️ How It Works
 Every 15 minutes, the bot fetches current weather observations from the WeatherFlow API.
 The bot formats the weather data into a compact 5-line message including temperature, wind, rain, lightning, and brightness data.
