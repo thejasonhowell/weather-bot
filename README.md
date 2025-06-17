@@ -27,6 +27,16 @@ HTTPS connections to external APIs.
 Local only logging — no external database or cloud storage.
 Minimal external exposure — no open web ports, no server listeners.
 
+Example Output
+
+```
+🕓 16:00 | 🥵 90.0°F | 💧 61% | ☀️ UV: 0.48
+☔ Rain: 0.000 in (1h) / 0.000 in (day) | 24h Rain: 0.000 in
+🍃 Wind: 0.2 mph (gust: 1.1 mph, 307° NW) | Max: 1.1 mph 😌 / 1.8 mph 🌬
+⚡ Lightning: 0 (3hr), 24h Strikes: 927 | last: 16.2 mi @ 20:09
+💡 6443 lux | #peoriaweather
+```
+
 📄 Example .env file
 <br>
 TELEGRAM_TOKEN=your_telegram_token_here
