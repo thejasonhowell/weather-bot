@@ -1,41 +1,73 @@
 ![License](https://img.shields.io/github/license/thejasonhowell/weather-bot)
 ![Last Commit](https://img.shields.io/github/last-commit/thejasonhowell/weather-bot)
 
-🌦️ Peoria Weather Bot
-<br>
-This is an automated weather bot that fetches real-time weather data from a WeatherFlow station and posts updates to social media platforms like Mastodon, Bluesky, Telegram, and Twitter. It’s designed for reliable, hands-off operation with simple manual overrides.
+🌦️ **Peoria Weather Bot**  
+This automated bot fetches real-time data from a WeatherFlow station and posts compact, emoji-rich updates to Mastodon, Bluesky, Telegram, and Twitter. Designed for reliable, hands-off operation with simple manual overrides.
 
+---
 
-🚀 Features
-Weather Updates every 15 minutes:
-Temperature, humidity, UV index
-Rainfall and snowfall (last hour, last day)
-24-hour total rainfall and lightning strikes
-Wind (current and max), wind direction
-Brightness (lux level)
-Posts Weather Reports To:
-<br>🐘 Mastodon
-<br>🔵 Bluesky
-<br>🐦 Twitter
-<br>📢 Telegram
-<br><br>Heartbeat: Sends a ping to BetterStack every 30 minutes to confirm the bot is alive.
-<br><br>Manual Update: Send a SIGUSR1 signal to trigger an immediate weather update.
-<br>Local Storage: Maintains a rolling 24-hour log (weatherdata.json) to calculate total rainfall and lightning strikes over the past day.
-<br><br>️🛡Security
-No hardcoded API keys — all sensitive information is loaded from a .env file.
-HTTPS connections to external APIs.
-Local only logging — no external database or cloud storage.
-Minimal external exposure — no open web ports, no server listeners.
+## 🚀 Features
 
-Example Output
+- **Regular Updates**  
+  - Fetches every **15 minutes**; **posts once immediately on startup**, then enters scheduler loop.  
+- **Temperature**  
+  - Actual & **Feels-Like (FL)** temperatures (°F) with context-sensitive emojis.  
+- **Humidity & UV**  
+  - Relative humidity (%) and UV index.  
+- **Precipitation**  
+  - **Instant** precip (in).  
+  - Last **1 hour** total (in).  
+  - Rolling **24 hour** total (in), persisted in `weatherdata.json`.  
+- **Wind**  
+  - Current speed, gust, and direction (mph & cardinal).  
+  - Rolling **24 hour** maxima for wind and gusts.  
+- **Lightning**  
+  - Strikes in the last **3 hours**.  
+  - Rolling **24 hour** strike count.  
+  - Distance & time of last strike.  
+- **Brightness**  
+  - Ambient lux level.  
+- **Manual Override**  
+  - Send a `SIGUSR1` to trigger an immediate update:  
+    ```bash
+    ps aux | grep main.py
+    kill -USR1 <PID>
+    ```
+- **Heartbeat**  
+  - Pings BetterStack every **30 minutes** to confirm uptime.
 
+---
+
+## 📄 Example Output
 ```
-🕓 16:00 | 🥵 90.0°F | 💧 61% | ☀️ UV: 0.48
-☔ Rain: 0.000 in (1h) / 0.000 in (day) | 24h Rain: 0.000 in
-🍃 Wind: 0.2 mph (gust: 1.1 mph, 307° NW) | Max: 1.1 mph 😌 / 1.8 mph 🌬
-⚡ Lightning: 0 (3hr), 24h Strikes: 927 | last: 16.2 mi @ 20:09
+🕓 16:00 | 🥵 90.0°F (FL 88.2°F) | 💧 61% | ☀️ UV 0.48
+🌧️ 0.02 in inst | ☔ 0.10 in (1h) | 24 h total: 0.25 in
+🍃 5.4 mph NW | Gust 12.3 mph 🌬
+🌬️ 24 h max: 15.2 mph winds, 23.4 mph gusts
+⚡ 2 strikes (3 h) | 15 strikes (24 h) | last 3.2 mi @ 15:42
 💡 6443 lux | #peoriaweather
 ```
+
+---
+
+## ⚙️ How It Works
+
+1. **Startup**  
+   - Loads env vars from `.env`  
+   - **Posts one update immediately**  
+   - Initializes rolling-log file (`weatherdata.json`)  
+2. **Scheduler Loop**  
+   - Every **15 minutes**: fetch & post to Mastodon, Bluesky, Telegram  
+   - Every **30 minutes**: additionally post to Twitter & send heartbeat  
+3. **Manual Update**  
+   - `SIGUSR1` triggers `force_update()` for an instant broadcast  
+4. **Data Logging**  
+   - Appends each fetch to the 24 hr JSON log  
+   - Trims entries older than 24 h  
+   - Sums values for accurate 24 hr totals
+
+---
+
 
 📄 Example .env file
 <br>
