@@ -1,0 +1,37 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.python-version
+.venv/
+venv/
+
+# Runtime state
+bsky_session.json
+session.json
+.bsky_sessions/
+weatherdata.json
+last_conditions.json
+alert_history.json
+
+# Local scripts/backups and scratch files
+*backup*.py
+*.backup.py
+main-pistar.py
+UDPlistener.py
+check_forecast_keys.py
+weatheralerts.py
+weatherforecast.py
+/text.py.text
+/PeoriaWeatherBot.py
+
+# IDE and OS metadata
+.DS_Store
+.idea/
+
+# Local assets not needed for deployment
+profile photo/
