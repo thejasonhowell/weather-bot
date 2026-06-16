@@ -126,3 +126,6 @@ kill -USR1 <PID>
 
 ## 📜 License
 GPL-3.0 License
+
+## Acknowledgment
+Development of this project included AI-assisted coding support from ChatGPT/Codex. Final decisions, configuration, and deployment remain maintained by the project owner.
