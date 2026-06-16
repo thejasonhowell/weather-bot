@@ -15,8 +15,6 @@ This automated bot fetches real-time data from a WeatherFlow station and posts c
   - **Rapid Change Alerts**: Notifies if temperature drops **≥ 10°F** over ~**1 hour** (3-hour cooldown).
 - **Daily Summary**
   - Sends a wrap-up report at **11:59 PM** with daily high/low, daily rain (day total), and max wind.
-- **Severe Weather**
-  - Monitors NWS alerts and reposts warnings for the area.
 - **Precipitation**
   - Reports 1-hour accumulation and WeatherFlow daily accumulation (day total).
   - Distinguishes between Rain and Snow based on temperature.
@@ -63,15 +61,6 @@ This automated bot fetches real-time data from a WeatherFlow station and posts c
 ### ⚠️ Rapid Change Alert
 ```
 ⚠️ Rapid temp drop: -12.5°F in ~1h (74.5→62.0). 15:00→16:00 #peoriaweather
-```
-
-### 🚨 NWS Severe Weather Alert
-```
-⛈️ SEVERE THUNDERSTORM WARNING ⛈️ has been issued by NWS ILX on June 15, 2025, at 02:30 PM CDT
-**Where:** Multiple counties including Peoria
-**Expires:** June 15, 2025, at 03:15 PM CDT
-https://forecast.weather.gov/MapClick.php?zoneid=ILZ029
-#ILwx #cILwx
 ```
 
 ---
