@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Last Modified: 2026-05-01
+# Last Modified: 2026-06-18
 # To force an update of the weather bot while it's running,
 # send a SIGUSR1 signal to its process.
 # For instance, if the process ID is 1234, run:
@@ -179,6 +179,130 @@ def wind_emoji(sustained, gust):
     return sustained_emoji, gust_emoji
 
 
+def _friendly_time(dt: datetime | None = None) -> str:
+    dt = dt or datetime.now()
+    return dt.strftime("%I:%M %p").lstrip("0")
+
+
+def _headline_wind_phrase(wind_speed_mph: float, wind_dir_cardinal: str) -> str:
+    rounded_speed = round(wind_speed_mph)
+    if rounded_speed <= 2:
+        return "calm air"
+    if rounded_speed <= 7:
+        return f"light {wind_dir_cardinal} wind"
+    if rounded_speed <= 14:
+        return f"gentle {wind_dir_cardinal} wind"
+    if rounded_speed <= 24:
+        return f"breezy {wind_dir_cardinal} wind"
+    if rounded_speed <= 34:
+        return f"windy {wind_dir_cardinal} wind"
+    return f"strong {wind_dir_cardinal} wind"
+
+
+def _headline_condition(rain_in_1h: float, lightning_count: int) -> str:
+    if lightning_count > 0:
+        return "stormy"
+    if rain_in_1h >= 0.10:
+        return "rainy"
+    if rain_in_1h >= 0.01:
+        return "light rain"
+    return "dry"
+
+
+def _daily_summary_narrative(hi: float | None, rain: float, gust: float) -> str:
+    if hi is None:
+        temp_phrase = "Uneventful"
+    elif hi >= 90:
+        temp_phrase = "A hot"
+    elif hi >= 80:
+        temp_phrase = "A warm"
+    elif hi >= 65:
+        temp_phrase = "A mild"
+    elif hi >= 50:
+        temp_phrase = "A cool"
+    else:
+        temp_phrase = "A cold"
+
+    if gust >= 30:
+        wind_phrase = "windy day"
+    elif gust >= 20:
+        wind_phrase = "breezy day"
+    else:
+        wind_phrase = "fairly calm day"
+
+    if rain >= 0.25:
+        rain_phrase = "with steady rain."
+    elif rain >= 0.05:
+        rain_phrase = "with a passing shower."
+    elif rain > 0:
+        rain_phrase = "with a trace of rain."
+    else:
+        rain_phrase = "with dry conditions."
+
+    return f"{temp_phrase} {wind_phrase} {rain_phrase}"
+
+
+def _temperature_trend_line(current_temp_f: float) -> str | None:
+    if len(_temp_history) < 2:
+        return None
+
+    now_epoch = time.time()
+    target = now_epoch - 30 * 60
+    candidates = [(t, temp) for (t, temp) in _temp_history if t <= target]
+    if not candidates:
+        return None
+
+    prev_t, prev_temp = min(candidates, key=lambda x: abs(x[0] - target))
+    delta = current_temp_f - prev_temp
+
+    if delta <= -5:
+        return "Temperatures are falling quickly."
+    if delta >= 5:
+        return "Temperatures are climbing quickly."
+    return None
+
+
+def _wind_trend_line(wind_speed_mph: float, wind_gust_mph: float) -> str | None:
+    if wind_gust_mph >= 20 and (wind_gust_mph - wind_speed_mph) >= 6:
+        return "Gusts are starting to kick up."
+    if wind_speed_mph >= 18:
+        return "Winds are staying noticeably up."
+    return None
+
+
+def _rain_trend_line(rain_in_1h: float, current_rain_event_total: float) -> str | None:
+    if rain_in_1h >= 0.01 and current_rain_event_total <= 0.03:
+        return "Rain just started."
+    if current_rain_event_total >= 0.25:
+        return "Rain is adding up across town."
+    return None
+
+
+def _lightning_trend_line(lightning_count: int, lightning_distance_mi: float) -> str | None:
+    if lightning_count <= 0:
+        return None
+    if lightning_distance_mi <= 5:
+        return "Storms remain nearby."
+    return "Lightning is still in the area."
+
+
+def _should_include_hashtag(
+    current_temp_f: float,
+    rain_in_1h: float,
+    lightning_count: int,
+    wind_gust_mph: float,
+    current_rain_event_total: float,
+) -> bool:
+    return any([
+        current_temp_f >= 85,
+        current_temp_f <= 32,
+        rain_in_1h >= 0.01,
+        current_rain_event_total >= 0.05,
+        lightning_count > 0,
+        wind_gust_mph >= 20,
+    ])
+
+
 def _update_daily_stats(current_temp_f: float, rain_in_day: float):
     """Track daily high/low temperature and daily rain total for the summary."""
     global _daily_high_temp_f, _daily_low_temp_f, _daily_rain_total_in
@@ -224,12 +348,12 @@ def check_rapid_changes(current_temp_f: float) -> str | None:
 
     if drop >= 10.0:
         _last_rapid_alert_epoch = now_epoch
-        prev_time = datetime.fromtimestamp(prev_t).strftime("%H:%M")
-        now_time = datetime.now().strftime("%H:%M")
-        # Keep this concise for Twitter
+        prev_time = _friendly_time(datetime.fromtimestamp(prev_t))
+        now_time = _friendly_time()
         return (
-            f"⚠️ Rapid temp drop: -{drop:.1f}°F in ~1h ({prev_temp:.1f}→{current_temp_f:.1f}). "
-            f"{prev_time}→{now_time} #peoriaweather"
+            f"Rapid temperature drop in Peoria: down {round(drop)}°F in about an hour.\n\n"
+            f"{round(prev_temp)}°F to {round(current_temp_f)}°F from {prev_time} to {now_time}\n"
+            f"#peoriaweather"
         )
 
     return None
@@ -248,14 +372,26 @@ def send_daily_summary():
     # Fallbacks in case we have limited data
     hi_str = f"{hi:.1f}°F" if hi is not None else "N/A"
     lo_str = f"{lo:.1f}°F" if lo is not None else "N/A"
+    narrative = _daily_summary_narrative(hi, rain, daily_max_wind_gust)
 
-    summary_message = (
-        f"📊 Daily Summary ({date_str})\n"
-        f"🌡 High/Low: {hi_str} / {lo_str}\n"
-        f"☔ Rain (day): {rain:.3f} in\n"
-        f"🍃 Max Wind: {daily_max_wind_avg:.1f} mph / {daily_max_wind_gust:.1f} mph\n"
-        f"#peoriaweather"
-    )
+    if hi is not None and lo is not None:
+        summary_message = (
+            f"Peoria weather summary for {date_str}:\n\n"
+            f"{narrative}\n"
+            f"High {round(hi)}°F, low {round(lo)}°F\n"
+            f"Rain: {rain:.2f}\"\n"
+            f"Peak wind: {round(daily_max_wind_avg)} mph, gusting to {round(daily_max_wind_gust)}\n"
+            f"#peoriaweather"
+        )
+    else:
+        summary_message = (
+            f"Peoria weather summary for {date_str}:\n\n"
+            f"{narrative}\n"
+            f"High/low: {hi_str} / {lo_str}\n"
+            f"Rain: {rain:.2f}\"\n"
+            f"Peak wind: {round(daily_max_wind_avg)} mph, gusting to {round(daily_max_wind_gust)}\n"
+            f"#peoriaweather"
+        )
 
     # post_to_mastodon(summary_message)
     post_to_bluesky(summary_message)
@@ -325,7 +461,8 @@ def format_weather_data(data):
 
     current_temp_c = data.get('air_temperature', 0)
     current_temp_f = current_temp_c * 9 / 5 + 32
-    temp_emoji = get_temperature_emoji(current_temp_f)
+    feels_like_c = data.get('feels_like', current_temp_c)
+    feels_like_f = feels_like_c * 9 / 5 + 32
 
     wind_speed_mps = data.get('wind_avg', 0)
     wind_speed_mph = wind_speed_mps * 2.23694
@@ -343,7 +480,6 @@ def format_weather_data(data):
 
     humidity = data.get('relative_humidity', 0)
     uv_index = data.get('uv', 0)
-    brightness = data.get('brightness', 0)
 
     rain_mm_1h = data.get('precip_accum_last_1hr', 0)
     rain_mm_day = data.get('precip_accum_local_day', 0)
@@ -352,14 +488,6 @@ def format_weather_data(data):
 
     # Update daily stats for end-of-day summary
     _update_daily_stats(current_temp_f, rain_in_day)
-
-    precip_str = ""
-    if current_temp_f >= 33:
-        precip_str = f"☔ Rain: {rain_in_1h:.3f} in (1h) / {rain_in_day:.3f} in (day)"
-    elif current_temp_f <= 32:
-        snow_in_1h = rain_in_1h * 10
-        snow_in_day = rain_in_day * 10
-        precip_str = f"❄️ Snow: {snow_in_1h:.3f} in (1h, est.) / {snow_in_day:.3f} in (day, est.)"
 
     # Rain event tracking:
     now_epoch = time.time()
@@ -381,7 +509,7 @@ def format_weather_data(data):
     lightning_distance_mi = lightning_distance_km * 0.621371
     lightning_epoch = data.get("lightning_strike_last_epoch", None)
     if lightning_epoch:
-        last_strike_time = datetime.fromtimestamp(lightning_epoch).strftime("%H:%M")
+        last_strike_time = _friendly_time(datetime.fromtimestamp(lightning_epoch))
         if (last_strike_epoch_global is None) or ((lightning_epoch - last_strike_epoch_global) >= 3 * 3600):
             current_event_strike_total = lightning_count
         else:
@@ -391,18 +519,62 @@ def format_weather_data(data):
         last_strike_time = "N/A"
         current_event_strike_total = 0
 
-    clock_emoji = get_clock_emoji()
-    sustained_emoji, gust_emoji = wind_emoji(daily_max_wind_avg, daily_max_wind_gust)
+    trend_lines = [
+        _temperature_trend_line(current_temp_f),
+        _wind_trend_line(wind_speed_mph, wind_gust_mph),
+        _rain_trend_line(rain_in_1h, current_rain_event_total),
+        _lightning_trend_line(lightning_count, lightning_distance_mi),
+    ]
 
-    # Construct condensed message (5 lines)
-    weather_message = (
-        f"{clock_emoji} {current_time} | {temp_emoji} {current_temp_f:.1f}°F | 💧 {humidity}% | ☀️ UV: {uv_index}\n"
-        f"{precip_str} | Rain Event: {current_rain_event_total:.3f} in\n"
-        f"🍃 Wind: {wind_speed_mph:.1f} mph (gust: {wind_gust_mph:.1f} mph, {wind_dir_degrees}° {wind_dir_cardinal}) | Max: {daily_max_wind_avg:.1f} mph {sustained_emoji} / {daily_max_wind_gust:.1f} mph {gust_emoji}\n"
-        f"⚡ Lightning: {lightning_count} (3hr), Event: {current_event_strike_total} | last: {lightning_distance_mi:.1f} mi @ {last_strike_time}\n"
-        f"💡 {brightness} lux | #peoriaweather"
-    )
-    return weather_message
+    lines = [
+        (
+            f"Peoria weather at {_friendly_time()}: {round(current_temp_f)}°F, "
+            f"{_headline_wind_phrase(wind_speed_mph, wind_dir_cardinal)}, "
+            f"{_headline_condition(rain_in_1h, lightning_count)}."
+        ),
+        "",
+        f"Feels like {round(feels_like_f)}°F",
+    ]
+
+    if current_temp_f >= 33:
+        if rain_in_1h >= 0.01 or rain_in_day >= 0.01:
+            lines.append(f"Rain {rain_in_1h:.2f}\" last hour, {rain_in_day:.2f}\" today")
+        if current_rain_event_total >= 0.01:
+            lines.append(f"This rain event: {current_rain_event_total:.2f}\"")
+    else:
+        snow_in_1h = rain_in_1h * 10
+        snow_in_day = rain_in_day * 10
+        if snow_in_1h >= 0.1 or snow_in_day >= 0.1:
+            lines.append(f"Snow est. {snow_in_1h:.1f}\" last hour, {snow_in_day:.1f}\" today")
+
+    wind_line = f"Wind {round(wind_speed_mph)} mph from {wind_dir_cardinal}"
+    if round(wind_gust_mph) > round(wind_speed_mph):
+        wind_line += f", gusting to {round(wind_gust_mph)}"
+    lines.append(wind_line)
+
+    for trend_line in trend_lines:
+        if trend_line and trend_line not in lines:
+            lines.append(trend_line)
+
+    if lightning_count > 0:
+        lines.append(f"Lightning: {lightning_count} strikes in the last 3 hours")
+        if last_strike_time != "N/A":
+            lines.append(f"Closest strike: {round(lightning_distance_mi)} mi at {last_strike_time}")
+    else:
+        if (humidity >= 70 and current_temp_f >= 75) or humidity <= 30:
+            lines.append(f"Humidity {round(humidity)}%")
+        if uv_index >= 3:
+            lines.append(f"UV index {round(uv_index)}")
+
+    if _should_include_hashtag(
+        current_temp_f,
+        rain_in_1h,
+        lightning_count,
+        wind_gust_mph,
+        current_rain_event_total,
+    ):
+        lines.append("#peoriaweather")
+    return "\n".join(lines)
 
 
 # Functions to post to social media platforms

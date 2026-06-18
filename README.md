@@ -2,29 +2,37 @@
 ![Last Commit](https://img.shields.io/github/last-commit/thejasonhowell/weather-bot)
 
 🌦️ **Peoria Weather Bot**
-This automated bot fetches real-time data from a WeatherFlow station and posts compact, emoji-rich updates to Mastodon, Bluesky, Telegram, and Twitter. Designed for reliable, hands-off operation with simple manual overrides.
+This automated bot fetches real-time data from a WeatherFlow station and posts human-readable weather updates to Bluesky and Telegram. Designed for reliable, hands-off operation with simple manual overrides.
 
 ---
 
 ## 🚀 Features
 
 - **Regular Updates**
-  - Fetches every **15 minutes**; enters scheduler loop.
+  - Fetches every **15 minutes** in a scheduler loop.
+- **Human-Friendly Social Format**
+  - Leads with a readable summary line such as `Peoria weather at 8:15 PM: 78°F, light NW wind, dry.`
+  - Uses cleaner social rounding for wind, rain, and lightning distance.
+  - Hides low-value fields such as UV or lightning when they do not matter.
 - **Temperature & Alerts**
-  - Actual & **Feels-Like (FL)** temperatures (°F).
-  - **Rapid Change Alerts**: Notifies if temperature drops **≥ 10°F** over ~**1 hour** (3-hour cooldown).
+  - Includes actual and **feels like** temperature in routine updates.
+  - Sends **rapid temperature drop alerts** when the temperature falls **10°F or more** in about **1 hour** with a **3-hour cooldown**.
 - **Daily Summary**
-  - Sends a wrap-up report at **11:59 PM** with daily high/low, daily rain (day total), and max wind.
+  - Sends a more narrative wrap-up at **11:59 PM** with high/low, rain total, and peak wind.
 - **Precipitation**
-  - Reports 1-hour accumulation and WeatherFlow daily accumulation (day total).
-  - Distinguishes between Rain and Snow based on temperature.
+  - Reports last-hour and daily rain totals.
+  - Tracks the current rain event separately from the daily total.
+  - Switches to estimated snowfall output when temperatures are at or below freezing.
 - **Wind**
-  - Current speed, gust, and direction.
-  - Tracks daily maximum wind and gust (resets at midnight).
+  - Reports current wind, gusts, and direction in a cleaner plain-language format.
+  - Tracks daily maximum sustained wind and gusts, resetting at midnight.
 - **Lightning**
-  - Strikes in last **3 hours**.
+  - Reports strikes from the last **3 hours** only when lightning is present.
+  - Includes closest strike distance and time when available.
 - **Heartbeat**
   - Pings BetterStack every **30 minutes**.
+- **Manual Overrides**
+  - Supports **SIGUSR1** to force an immediate weather update without waiting for the next scheduler run.
 
 ---
 
@@ -37,30 +45,68 @@ This automated bot fetches real-time data from a WeatherFlow station and posts c
 - `telegram` - Telegram Bot API
 - `bsky-bridge` - Bluesky API bridge
 
+### Current Active Posting Targets
+- Bluesky
+- Telegram
+
+### Currently Disabled Posting Targets
+- Mastodon
+- Twitter
+
 ---
 
 ## 📄 Example Output
 
 ```
-🕓 16:00 | 🥵 90.0°F (FL 88.2°F) | 💧 61% | ☀️ UV 0.48
-☔ 0.10 in (1h) | Rain (day): 0.25 in | Event: 0.12 in
-🍃 5.4 mph NW | Gust 12.3 mph 🌬
-⚡ 2 strikes (3 h) | last 3.2 mi @ 15:42
-💡 6443 lux | #peoriaweather
+Peoria weather at 8:15 PM: 78°F, light NW wind, dry.
+
+Feels like 80°F
+Wind 6 mph from NW, gusting to 12
+Humidity 61%
+#peoriaweather
 ```
 
 ### 📊 Daily Summary (11:59 PM)
 ```
-📊 Daily Summary (2025-11-20)
-🌡 High/Low: 75.2°F / 54.1°F
-☔ Rain (day): 0.120 in
-🍃 Max Wind: 12.5 mph / 18.2 mph
+Peoria weather summary for 2026-06-18:
+
+A warm breezy day with a passing shower.
+High 84°F, low 67°F
+Rain: 0.18"
+Peak wind: 14 mph, gusting to 27
 #peoriaweather
 ```
 
 ### ⚠️ Rapid Change Alert
 ```
-⚠️ Rapid temp drop: -12.5°F in ~1h (74.5→62.0). 15:00→16:00 #peoriaweather
+Rapid temperature drop in Peoria: down 12°F in about an hour.
+
+74°F to 62°F from 3:00 PM to 4:00 PM
+#peoriaweather
+```
+
+### 🌧 Rain Event Example
+```
+Peoria weather at 8:15 PM: 72°F, gentle SE wind, light rain.
+
+Feels like 72°F
+Rain 0.08" last hour, 0.21" today
+This rain event: 0.12"
+Wind 9 mph from SE, gusting to 15
+Humidity 92%
+#peoriaweather
+```
+
+### ⛈ Lightning Example
+```
+Peoria weather at 8:15 PM: 74°F, breezy SW wind, stormy.
+
+Feels like 76°F
+Rain 0.05" last hour, 0.15" today
+Wind 12 mph from SW, gusting to 22
+Lightning: 6 strikes in the last 3 hours
+Closest strike: 4 mi at 8:07 PM
+#peoriaweather
 ```
 
 ---
@@ -68,16 +114,16 @@ This automated bot fetches real-time data from a WeatherFlow station and posts c
 ## ⚙️ How It Works
 
 1. **Startup**
-   - Loads env vars from `.env`
-   - Initializes rolling-log file (`weatherdata.json`)
+   - Loads environment variables from `.env` in the local script
+   - Initializes posting clients and in-memory daily/event tracking
 2. **Scheduler Loop**
-   - Every **15 minutes**: fetch & post to Mastodon, Bluesky, Telegram
-   - Every **30 minutes**: additionally post to Twitter & send heartbeat
-   - **23:59**: Daily Summary
+   - Every **15 minutes**: fetch and post the current weather update
+   - Every **30 minutes**: send BetterStack heartbeat
+   - **23:59**: send daily summary
 3. **Manual Update**
-   - `SIGUSR1` triggers `force_update()` for an instant broadcast
-4. **Data Logging**
-   - Appends each fetch to a JSON log and trims entries older than 24 h.
+   - `SIGUSR1` triggers `force_update()` for an immediate post
+4. **Event Tracking**
+   - Maintains rolling in-memory state for rain events, lightning events, rapid temp-drop alerts, and daily summary values
 
 ---
 
@@ -99,9 +145,11 @@ TWITTER_ACCESS_TOKEN=your_twitter_access_token
 TWITTER_ACCESS_TOKEN_SECRET=your_twitter_access_token_secret
 WEATHERFLOW_API_TOKEN=your_weatherflow_api_token
 WEATHERFLOW_STATION_ID=your_station_id
-OPENWEATHERMAP_API_KEY=your_openweathermap_api_key
 BETTERSTACK_HEARTBEAT_URL=https://uptime.betterstack.com/api/v1/heartbeat/your_token_here
 ```
+
+### Pi-Star Variant
+`main-pistar.py` mirrors the same weather logic and posting format, but keeps its credentials hardcoded for simpler deployment on Pi-Star style environments.
 
 ### Manual Trigger
 To manually trigger a weather update while the bot is running, send a **SIGUSR1** signal to its process.
