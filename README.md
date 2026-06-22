@@ -12,6 +12,7 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
   - Fetches every **15 minutes** in a scheduler loop.
 - **Human-Friendly Social Format**
   - Leads with a readable summary line such as `Peoria weather at 8:15 PM: 78°F, light NW wind, dry.`
+  - Varies the lead sentence by condition so posts feel more like a local station update and less like a fixed template.
   - Uses cleaner social rounding for wind, rain, and lightning distance.
   - Hides low-value fields such as UV or lightning when they do not matter.
 - **Temperature & Alerts**

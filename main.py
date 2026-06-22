@@ -356,6 +356,83 @@ def _headline_condition(rain_in_1h: float, lightning_count: int) -> str:
     return "dry"
 
 
+def _condition_phrase(condition: str) -> str:
+    phrases = {
+        "dry": "dry conditions",
+        "light rain": "light rain",
+        "rainy": "steady rain",
+        "stormy": "storms nearby",
+    }
+    return phrases.get(condition, condition)
+
+
+def _local_station_lead(snapshot: dict) -> str:
+    observed_at = snapshot["observed_at"]
+    time_text = _friendly_time(observed_at)
+    temp_text = f"{round(snapshot['current_temp_f'])}°F"
+    wind_phrase = _headline_wind_phrase(snapshot["wind_speed_mph"], snapshot["wind_dir_cardinal"])
+    condition = snapshot["headline_condition"]
+    condition_text = _condition_phrase(condition)
+
+    if snapshot["lightning_count"] > 0:
+        templates = [
+            f"Storms are close enough to watch in Peoria at {time_text}: {temp_text}, {wind_phrase}.",
+            f"Peoria storm check at {time_text}: {temp_text}, {wind_phrase}, {condition_text}.",
+            f"Active weather near Peoria at {time_text}: {temp_text} with {wind_phrase}.",
+        ]
+    elif snapshot["rain_in_1h"] >= 0.10:
+        templates = [
+            f"Rain is making itself known in Peoria at {time_text}: {temp_text}, {wind_phrase}.",
+            f"A wet read from Peoria at {time_text}: {temp_text}, {wind_phrase}, {condition_text}.",
+            f"Peoria weather at {time_text}: {temp_text} with {condition_text} and {wind_phrase}.",
+        ]
+    elif snapshot["rain_in_1h"] >= 0.01:
+        templates = [
+            f"Light rain is passing through Peoria at {time_text}: {temp_text}, {wind_phrase}.",
+            f"Peoria has a little rain in the mix at {time_text}: {temp_text}, {wind_phrase}.",
+            f"A damp check-in from Peoria at {time_text}: {temp_text}, {wind_phrase}.",
+        ]
+    elif snapshot["wind_gust_mph"] >= 20 or snapshot["wind_speed_mph"] >= 15:
+        templates = [
+            f"Breezes are doing the talking in Peoria at {time_text}: {temp_text}, {wind_phrase}, {condition_text}.",
+            f"Peoria weather at {time_text}: {temp_text}, {wind_phrase}, still {condition}.",
+            f"A windier read from Peoria at {time_text}: {temp_text} with {wind_phrase}.",
+        ]
+    elif snapshot["current_temp_f"] >= 85:
+        templates = [
+            f"A warm stretch continues in Peoria at {time_text}: {temp_text}, {wind_phrase}, {condition_text}.",
+            f"Peoria is running warm at {time_text}: {temp_text} with {wind_phrase}.",
+            f"Summer has the wheel in Peoria at {time_text}: {temp_text}, {wind_phrase}, {condition_text}.",
+        ]
+    elif snapshot["current_temp_f"] <= 32:
+        templates = [
+            f"A cold read from Peoria at {time_text}: {temp_text}, {wind_phrase}, {condition_text}.",
+            f"Peoria is below freezing at {time_text}: {temp_text} with {wind_phrase}.",
+            f"Cold air is settled into Peoria at {time_text}: {temp_text}, {wind_phrase}.",
+        ]
+    elif round(snapshot["wind_speed_mph"]) <= 2:
+        templates = [
+            f"Still calm across Peoria at {time_text}: {temp_text}, {wind_phrase}, {condition}.",
+            f"A quiet read from Peoria at {time_text}: {temp_text} with {wind_phrase} and {condition_text}.",
+            f"Peoria is holding steady at {time_text}: {temp_text}, {wind_phrase}, {condition}.",
+        ]
+    else:
+        templates = [
+            f"Peoria weather at {time_text}: {temp_text}, {wind_phrase}, {condition}.",
+            f"A steady check-in from Peoria at {time_text}: {temp_text}, {wind_phrase}, {condition_text}.",
+            f"Here is the Peoria read at {time_text}: {temp_text} with {wind_phrase} and {condition_text}.",
+            f"Peoria is sitting at {temp_text} at {time_text}: {wind_phrase}, {condition}.",
+        ]
+
+    index = (
+        observed_at.hour
+        + observed_at.minute // 15
+        + round(snapshot["current_temp_f"])
+        + round(snapshot["wind_speed_mph"])
+    ) % len(templates)
+    return templates[index]
+
+
 def _daily_summary_narrative(hi: float | None, rain: float, gust: float) -> str:
     if hi is None:
         temp_phrase = "Uneventful"
@@ -1275,12 +1352,7 @@ def format_weather_post(snapshot: dict, post_mode: str = "routine", followup_rea
         _pressure_trend_line(snapshot),
     ]
 
-    lead_line = (
-        f"Peoria weather at {_friendly_time(snapshot['observed_at'])}: "
-        f"{round(snapshot['current_temp_f'])}°F, "
-        f"{_headline_wind_phrase(snapshot['wind_speed_mph'], snapshot['wind_dir_cardinal'])}, "
-        f"{snapshot['headline_condition']}."
-    )
+    lead_line = _local_station_lead(snapshot)
 
     if post_mode == "storm_followup":
         lines = [
