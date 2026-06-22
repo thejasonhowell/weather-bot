@@ -19,6 +19,7 @@ from bsky_bridge import BskySession, post_text
 import logging
 import os
 import json
+import sys
 import time
 import math
 from datetime import datetime
@@ -29,12 +30,22 @@ import signal  # To handle signals (force update)
 from dotenv import load_dotenv
 load_dotenv()
 
+LOG_FILE = os.getenv("WEATHERBOT_LOG_FILE", "/tmp/weather.log")
+_log_handlers = [logging.StreamHandler()]
+try:
+    _log_handlers.insert(0, logging.FileHandler(LOG_FILE))
+except OSError as exc:
+    print(f"Warning: could not open log file {LOG_FILE}: {exc}", file=sys.stderr)
+    LOG_FILE = None
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s %(levelname)s: %(message)s',
-    handlers=[logging.StreamHandler()]
+    handlers=_log_handlers,
+    force=True,
 )
+logging.info("Logging initialized%s", f" to {LOG_FILE}" if LOG_FILE else "")
 
 # Telegram configuration using your bot info
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -1365,6 +1376,7 @@ def scheduler():
 # Main execution block
 if __name__ == "__main__":
     try:
+        logging.info("Weather bot starting.")
         scheduler()
     except KeyboardInterrupt:
         logging.info("Weather bot stopped manually.")
