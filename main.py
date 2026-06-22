@@ -45,6 +45,8 @@ logging.basicConfig(
     handlers=_log_handlers,
     force=True,
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.info("Logging initialized%s", f" to {LOG_FILE}" if LOG_FILE else "")
 
 # Telegram configuration using your bot info
@@ -102,6 +104,7 @@ _last_storm_follow_up_epoch = 0
 _pressure_history = []
 RIVER_GAUGE_ID = "PIAI2"
 RIVER_HISTORY_FILE = "river_history.json"
+POST_STATE_FILE = "post_state.json"
 RIVER_CHECK_INTERVAL = 30 * 60
 RIVER_POST_KEEPALIVE_SECONDS = 12 * 3600
 _last_river_check_epoch = 0
@@ -218,6 +221,114 @@ def wind_emoji(sustained, gust):
 def _friendly_time(dt: datetime | None = None) -> str:
     dt = dt or datetime.now()
     return dt.strftime("%I:%M %p").lstrip("0")
+
+
+def _snapshot_log_summary(snapshot: dict | None) -> str:
+    if not snapshot:
+        return "no snapshot"
+
+    observed_at = snapshot.get("observed_at")
+    if isinstance(observed_at, datetime):
+        observed_text = observed_at.strftime("%I:%M %p").lstrip("0")
+    else:
+        observed_text = "unknown time"
+
+    temp_f = snapshot.get("current_temp_f")
+    wind_speed = snapshot.get("wind_speed_mph")
+    gust = snapshot.get("wind_gust_mph")
+    rain_1h = snapshot.get("rain_in_1h", 0.0) or 0.0
+    condition = snapshot.get("headline_condition", "unknown")
+    lightning_count = snapshot.get("lightning_count", 0)
+
+    temp_text = f"{round(temp_f)}F" if temp_f is not None else "?F"
+    wind_text = f"{round(wind_speed)} mph" if wind_speed is not None else "? mph"
+    gust_text = f"{round(gust)}" if gust is not None else "?"
+    return (
+        f"{observed_text} {temp_text}, {condition}, wind {wind_text}, "
+        f"gust {gust_text}, rain {rain_1h:.2f}\"/h, lightning {lightning_count}"
+    )
+
+
+def _serialize_snapshot(snapshot: dict | None) -> dict | None:
+    if not snapshot:
+        return None
+    payload = dict(snapshot)
+    observed_at = payload.get("observed_at")
+    if isinstance(observed_at, datetime):
+        payload["observed_at"] = observed_at.isoformat()
+    return payload
+
+
+def _deserialize_snapshot(snapshot_data: dict | None) -> dict | None:
+    if not snapshot_data:
+        return None
+    snapshot = dict(snapshot_data)
+    observed_at = snapshot.get("observed_at")
+    if isinstance(observed_at, str):
+        try:
+            snapshot["observed_at"] = datetime.fromisoformat(observed_at)
+        except ValueError:
+            snapshot["observed_at"] = None
+    return snapshot
+
+
+def _save_post_state():
+    payload = {
+        "last_posted_weather_snapshot": _serialize_snapshot(_last_posted_weather_snapshot),
+        "last_posted_weather_epoch": _last_posted_weather_epoch,
+    }
+    try:
+        with open(POST_STATE_FILE, "w") as file:
+            json.dump(payload, file)
+    except Exception as e:
+        logging.error(f"Error saving post state: {e}")
+
+
+def _load_post_state():
+    global _last_posted_weather_snapshot, _last_posted_weather_epoch
+
+    if not os.path.exists(POST_STATE_FILE):
+        return
+
+    try:
+        with open(POST_STATE_FILE, "r") as file:
+            payload = json.load(file)
+
+        snapshot = _deserialize_snapshot(payload.get("last_posted_weather_snapshot"))
+        epoch = float(payload.get("last_posted_weather_epoch", 0) or 0)
+
+        if snapshot:
+            _last_posted_weather_snapshot = snapshot
+            _last_posted_weather_epoch = epoch
+            if not _last_posted_weather_epoch and isinstance(snapshot.get("observed_at"), datetime):
+                _last_posted_weather_epoch = snapshot["observed_at"].timestamp()
+            logging.info(
+                "Restored last posted weather state from %s (%s, mode=%s).",
+                POST_STATE_FILE,
+                _snapshot_log_summary(snapshot),
+                snapshot.get("post_mode", "unknown"),
+            )
+    except Exception as e:
+        logging.error(f"Error loading post state: {e}")
+
+
+def _seconds_since_last_post() -> float | None:
+    if not _last_posted_weather_epoch:
+        return None
+    return max(0.0, time.time() - _last_posted_weather_epoch)
+
+
+def _routine_suppression_reason(snapshot: dict, quiet_mode: bool) -> str:
+    keepalive_seconds = (
+        QUIET_HOURS_KEEPALIVE_SECONDS if quiet_mode else ROUTINE_POST_KEEPALIVE_SECONDS
+    )
+    last_age = _seconds_since_last_post()
+    last_age_text = f"{int(last_age // 60)}m ago" if last_age is not None else "unknown age"
+    return (
+        f"low change since last post {last_age_text} "
+        f"(keepalive {keepalive_seconds // 3600}h, last={_snapshot_log_summary(_last_posted_weather_snapshot)}, "
+        f"current={_snapshot_log_summary(snapshot)})"
+    )
 
 
 def _headline_wind_phrase(wind_speed_mph: float, wind_dir_cardinal: str) -> str:
@@ -633,6 +744,8 @@ def check_river_flood_status():
     forecast_category = forecast.get("floodCategory", "")
     observed_stage = _safe_float(observed.get("primary"))
     forecast_stage = _safe_float(forecast.get("primary"))
+    observed_stage_text = f"{observed_stage:.1f} ft" if observed_stage is not None else "unknown stage"
+    forecast_stage_text = f"{forecast_stage:.1f} ft" if forecast_stage is not None else "unknown stage"
 
     highest_rank = max(_river_category_rank(observed_category), _river_category_rank(forecast_category))
     history = _load_river_history()
@@ -654,11 +767,37 @@ def check_river_flood_status():
         elif (now_epoch - float(history.get("last_posted_epoch", 0))) >= RIVER_POST_KEEPALIVE_SECONDS:
             should_post = True
 
+    if highest_rank < 1:
+        logging.info(
+            "River check: below action stage (observed=%s %s, forecast=%s %s).",
+            observed_category or "no_flooding",
+            observed_stage_text,
+            forecast_category or "no_flooding",
+            forecast_stage_text,
+        )
+    elif not should_post:
+        logging.info(
+            "River check: no posting change (observed=%s %s, forecast=%s %s).",
+            observed_category or "unknown",
+            observed_stage_text,
+            forecast_category or "unknown",
+            forecast_stage_text,
+        )
+
     if should_post and observed_stage is not None:
+        logging.info(
+            "River check: posting update (observed=%s %s, forecast=%s %s).",
+            observed_category or "unknown",
+            observed_stage_text,
+            forecast_category or "unknown",
+            forecast_stage_text,
+        )
         river_message = format_river_status_post(gauge)
         post_to_bluesky(river_message)
         send_telegram_message(river_message)
         history["last_posted_epoch"] = now_epoch
+    elif should_post:
+        logging.warning("River check: update triggered but observed stage is unavailable.")
 
     history.update({
         "observed_category": observed_category,
@@ -700,6 +839,7 @@ def _record_weather_post(snapshot: dict, post_mode: str):
     global _last_posted_weather_snapshot, _last_posted_weather_epoch
     _last_posted_weather_snapshot = {**snapshot, "post_mode": post_mode}
     _last_posted_weather_epoch = time.time()
+    _save_post_state()
 
 
 def _should_suppress_routine_post(snapshot: dict, quiet_mode: bool) -> bool:
@@ -1220,6 +1360,7 @@ def format_weather_data(data, post_mode: str = "routine", followup_reason: str |
 
 
 def post_weather_update(weather_message: str, snapshot: dict, post_mode: str):
+    logging.info("Sending %s weather post (%s).", post_mode, _snapshot_log_summary(snapshot))
     # post_to_mastodon(weather_message)
     post_to_bluesky(weather_message)
     send_telegram_message(weather_message)
@@ -1302,7 +1443,7 @@ def send_heartbeat():
 
     try:
         requests.get(url).raise_for_status()
-        logging.info("Heartbeat sent successfully!")
+        logging.info("Heartbeat sent successfully for %s.", _friendly_time())
     except requests.RequestException as e:
         logging.error(f"Heartbeat: Sending failed. Error: {e}")
 
@@ -1325,10 +1466,13 @@ def force_update(signum, frame):
     if snapshot:
         weather_message = format_weather_post(snapshot, post_mode="routine")
         post_weather_update(weather_message, snapshot, "force")
+    else:
+        logging.warning("Force update skipped: no weather snapshot available.")
 
 
 # Register the signal handler for SIGUSR1
 signal.signal(signal.SIGUSR1, force_update)
+_load_post_state()
 
 
 # Scheduler function that runs the weather bot at defined intervals
@@ -1355,15 +1499,28 @@ def scheduler():
 
         # At every 15-minute mark, fetch and post weather data
         if minute % 15 == 0:
+            logging.info("Routine cycle %s: checking current conditions.", _friendly_time(now))
             snapshot = fetch_current_weather_snapshot()
             if snapshot:
                 quiet_mode = _is_quiet_hours(now) and not _is_notable_weather(snapshot)
                 if _should_suppress_routine_post(snapshot, quiet_mode):
-                    logging.info("Routine weather post suppressed due to low change.")
+                    logging.info(
+                        "Routine cycle %s: suppressed (%s).",
+                        _friendly_time(now),
+                        _routine_suppression_reason(snapshot, quiet_mode),
+                    )
                 else:
                     post_mode = "quiet" if quiet_mode else "routine"
+                    logging.info(
+                        "Routine cycle %s: posting mode=%s (%s).",
+                        _friendly_time(now),
+                        post_mode,
+                        _snapshot_log_summary(snapshot),
+                    )
                     weather_message = format_weather_post(snapshot, post_mode=post_mode)
                     post_weather_update(weather_message, snapshot, post_mode)
+            else:
+                logging.warning("Routine cycle %s: could not fetch a weather snapshot.", _friendly_time(now))
 
         # Send a heartbeat every 30 minutes
         if minute % 30 == 0:
