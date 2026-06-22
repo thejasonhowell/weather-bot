@@ -17,6 +17,7 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
 - **Temperature & Alerts**
   - Includes actual and **feels like** temperature in routine updates.
   - Sends **rapid temperature drop alerts** when the temperature falls **10°F or more** in about **1 hour** with a **3-hour cooldown**.
+  - Sends **storm follow-up posts** between normal cycles when nearby lightning or rain intensity ramps up quickly.
 - **Daily Summary**
   - Sends a more narrative wrap-up at **11:59 PM** with high/low, rain total, and peak wind.
 - **Precipitation**
@@ -26,9 +27,22 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
 - **Wind**
   - Reports current wind, gusts, and direction in a cleaner plain-language format.
   - Tracks daily maximum sustained wind and gusts, resetting at midnight.
+- **Comfort & Pressure**
+  - Adds dew point based comfort wording such as `comfortable`, `sticky`, `muggy`, or `tropical`.
+  - Includes barometer trend language like `pressure rising` or `pressure falling ahead of storms`.
 - **Lightning**
   - Reports strikes from the last **3 hours** only when lightning is present.
   - Includes closest strike distance and time when available.
+- **NWS Alerts**
+  - Polls active National Weather Service alerts for **Peoria County / ILC143**.
+  - Posts new alerts to Bluesky and Telegram from the main bot process.
+  - Dedupes alert posts locally with `alert_history.json`.
+- **River / Flood Awareness**
+  - Polls the NOAA NWPS river gauge for **Illinois River at Peoria (`PIAI2`)**.
+  - Posts separate river-status updates when flood category changes, crest forecasts shift, or a flood keepalive is needed.
+- **Posting Controls**
+  - Uses a lighter overnight posting mode during quiet hours.
+  - Suppresses low-change routine posts to cut down on duplicate social noise while still sending BetterStack heartbeats.
 - **Heartbeat**
   - Pings BetterStack every **30 minutes**.
 - **Manual Overrides**
@@ -62,7 +76,7 @@ Peoria weather at 8:15 PM: 78°F, light NW wind, dry.
 
 Feels like 80°F
 Wind 6 mph from NW, gusting to 12
-Humidity 61%
+Dew point 60°F, slightly humid air
 #peoriaweather
 ```
 
@@ -93,7 +107,7 @@ Feels like 72°F
 Rain 0.08" last hour, 0.21" today
 This rain event: 0.12"
 Wind 9 mph from SE, gusting to 15
-Humidity 92%
+Dew point 69°F, sticky air
 #peoriaweather
 ```
 
@@ -109,6 +123,26 @@ Closest strike: 4 mi at 8:07 PM
 #peoriaweather
 ```
 
+### 🌊 River Flood Example
+```
+🌊 Illinois River at Peoria is in minor flood at 19.8 ft.
+
+Observed at 7:45 AM: 19.8 ft
+Forecast crest: 20.2 ft by Jun 25 7:00 AM
+Flood stage: 18.0 ft
+Some flooding begins to bottomland not protected by levees.
+#peoriaweather
+```
+
+### 🚨 NWS Alert Example
+```
+⛈️ NWS Severe Thunderstorm Warning for Peoria County and nearby areas.
+
+Issued at 7:42 PM
+Until 8:30 PM
+#peoriaweather
+```
+
 ---
 
 ## ⚙️ How It Works
@@ -118,12 +152,17 @@ Closest strike: 4 mi at 8:07 PM
    - Initializes posting clients and in-memory daily/event tracking
 2. **Scheduler Loop**
    - Every **15 minutes**: fetch and post the current weather update
+   - Every **5 minutes**: check for new NWS alerts for `ILC143`
+   - Between routine cycles: watch for fast-changing storm conditions and send follow-up storm posts when warranted
+   - On an internal interval: check the NOAA river gauge for Peoria flood-stage or crest changes
    - Every **30 minutes**: send BetterStack heartbeat
    - **23:59**: send daily summary
 3. **Manual Update**
    - `SIGUSR1` triggers `force_update()` for an immediate post
 4. **Event Tracking**
-   - Maintains rolling in-memory state for rain events, lightning events, rapid temp-drop alerts, and daily summary values
+   - Maintains rolling in-memory state for rain events, lightning events, pressure trends, rapid temp-drop alerts, storm follow-up thresholds, and daily summary values
+   - Stores seen NWS alerts in `alert_history.json` so the same alert is not reposted repeatedly
+   - Stores last river flood state in `river_history.json` for category/crest change detection
 
 ---
 
