@@ -17,6 +17,7 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
   - Hides low-value fields such as UV or lightning when they do not matter.
   - Uses local sunrise/sunset times for Peoria so UV only appears during daylight.
   - Adds morning sunrise and afternoon/evening sunset timing with optional once-daily pre-sunrise and pre-sunset notices.
+  - Adds a cached NWS forecast peek to fuller routine posts.
 - **Temperature & Alerts**
   - Includes actual and **feels like** temperature in routine updates.
   - Sends **rapid temperature drop alerts** when the temperature falls **10°F or more** in about **1 hour** with a **3-hour cooldown**.
@@ -38,7 +39,7 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
   - Includes closest strike distance and time when available.
 - **NWS Alerts**
   - Polls active National Weather Service alerts for **Peoria County / ILC143**.
-  - Posts new alerts to Bluesky and Telegram from the main bot process.
+  - Posts new alerts to Bluesky and Telegram from the main bot process with a source link back to NWS.
   - Dedupes alert posts locally with `alert_history.json`.
 - **River / Flood Awareness**
   - Polls NOAA NWPS river gauges for **Illinois River at Peoria (`PIAI2`)** and **Illinois River at Peoria Lock and Dam (`PRAI2`)**.
@@ -82,6 +83,7 @@ Feels like 80°F
 Wind 6 mph from NW, gusting to 12
 Dew point 60°F, slightly humid air
 Sunset 8:34 PM
+Forecast: Tonight partly cloudy, low near 67°F.
 #peoriaweather
 ```
 
@@ -163,6 +165,7 @@ Some flooding begins to bottomland not protected by levees.
 
 Issued at 7:42 PM
 Until 8:30 PM
+Source: https://api.weather.gov/alerts/urn:oid:...
 #peoriaweather
 ```
 
@@ -176,6 +179,7 @@ Until 8:30 PM
 2. **Scheduler Loop**
    - Every **15 minutes**: fetch and post the current weather update
    - Every **5 minutes**: check for new NWS alerts for `ILC143`
+   - About once per hour as needed: refresh a short NWS forecast peek for routine posts
    - Once per day: send pre-sunrise and pre-sunset notices when each is within the configured lead time
    - Between routine cycles: watch for fast-changing storm conditions and send follow-up storm posts when warranted
    - On an internal interval: check the NOAA river gauge for Peoria flood-stage or crest changes

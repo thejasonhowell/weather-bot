@@ -98,8 +98,16 @@ _last_rapid_alert_epoch = 0
 
 # NWS alert tracking
 NWS_ALERT_ZONE = "ILC143"
+NWS_POINT_LAT = 40.6936
+NWS_POINT_LON = -89.5890
+NWS_FORECAST_CACHE_SECONDS = 60 * 60
 ALERT_HISTORY_FILE = "alert_history.json"
 _last_nws_alert_check_epoch = 0
+_nws_forecast_url = None
+_forecast_peek_cache = {
+    "epoch": 0,
+    "line": None,
+}
 
 # Posting behavior tuning
 QUIET_HOURS_START = 23
@@ -128,7 +136,7 @@ RIVER_CHECK_INTERVAL = 30 * 60
 RIVER_POST_KEEPALIVE_SECONDS = 12 * 3600
 _last_river_check_epoch = 0
 PEORIA_TIMEZONE = ZoneInfo("America/Chicago")
-PEORIA_LOCATION = LocationInfo("Peoria", "USA", "America/Chicago", 40.6936, -89.5890)
+PEORIA_LOCATION = LocationInfo("Peoria", "USA", "America/Chicago", NWS_POINT_LAT, NWS_POINT_LON)
 
 
 # Safely initialize Bluesky session
@@ -734,8 +742,80 @@ def format_nws_alert_post(alert) -> str:
     if headline and headline != event_name:
         lines.append(headline)
 
+    source_url = alert.get("id") or properties.get("@id")
+    if source_url:
+        lines.append(f"Source: {source_url}")
+
     lines.append("#peoriaweather")
     return "\n".join(lines)
+
+
+def _get_nws_forecast_url() -> str | None:
+    global _nws_forecast_url
+    if _nws_forecast_url:
+        return _nws_forecast_url
+
+    url = f"https://api.weather.gov/points/{NWS_POINT_LAT},{NWS_POINT_LON}"
+    try:
+        response = requests.get(
+            url,
+            headers={"User-Agent": "PeoriaWeatherBot/1.0"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        _nws_forecast_url = response.json().get("properties", {}).get("forecast")
+        return _nws_forecast_url
+    except requests.RequestException as e:
+        logging.error(f"Error fetching NWS forecast point metadata: {e}")
+        return None
+
+
+def _format_forecast_period(period: dict) -> str | None:
+    name = period.get("name")
+    short_forecast = period.get("shortForecast")
+    temperature = period.get("temperature")
+    unit = period.get("temperatureUnit", "F")
+    is_daytime = period.get("isDaytime")
+
+    if not name or not short_forecast or temperature is None:
+        return None
+
+    temp_word = "high" if is_daytime else "low"
+    return f"Forecast: {name} {short_forecast.lower()}, {temp_word} near {round(temperature)}°{unit}."
+
+
+def fetch_nws_forecast_peek() -> str | None:
+    now_epoch = time.time()
+    cached_line = _forecast_peek_cache.get("line")
+    if cached_line and (now_epoch - _forecast_peek_cache.get("epoch", 0)) < NWS_FORECAST_CACHE_SECONDS:
+        return cached_line
+
+    forecast_url = _get_nws_forecast_url()
+    if not forecast_url:
+        return None
+
+    try:
+        response = requests.get(
+            forecast_url,
+            headers={"User-Agent": "PeoriaWeatherBot/1.0"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        periods = response.json().get("properties", {}).get("periods", [])
+        for period in periods[:2]:
+            line = _format_forecast_period(period)
+            if line:
+                _forecast_peek_cache["epoch"] = now_epoch
+                _forecast_peek_cache["line"] = line
+                logging.info("Forecast peek refreshed: %s", line)
+                return line
+        logging.warning("Forecast peek unavailable: NWS forecast had no usable periods.")
+    except requests.RequestException as e:
+        logging.error(f"Error fetching NWS forecast peek: {e}")
+
+    _forecast_peek_cache["epoch"] = now_epoch
+    _forecast_peek_cache["line"] = None
+    return None
 
 
 def check_nws_alerts():
@@ -1622,6 +1702,9 @@ def format_weather_post(snapshot: dict, post_mode: str = "routine", followup_rea
         sunset_line = _sunset_detail_line(snapshot["observed_at"])
         if sunset_line:
             lines.append(sunset_line)
+        forecast_line = fetch_nws_forecast_peek()
+        if forecast_line:
+            lines.append(forecast_line)
 
     if _should_include_hashtag(
         snapshot["current_temp_f"],
