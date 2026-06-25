@@ -685,6 +685,16 @@ def _format_alert_area(area_desc: str) -> str:
     return counties[0]
 
 
+def _is_river_flood_alert(properties: dict) -> bool:
+    text = " ".join([
+        properties.get("event") or "",
+        properties.get("headline") or "",
+        properties.get("description") or "",
+        properties.get("instruction") or "",
+    ]).lower()
+    return "flood" in text and "river" in text
+
+
 def _load_alert_history() -> dict:
     if os.path.exists(ALERT_HISTORY_FILE):
         try:
@@ -726,21 +736,20 @@ def fetch_nws_alerts():
 def format_nws_alert_post(alert) -> str:
     properties = alert.get("properties", {})
     event_name = properties.get("event", "Weather Alert")
+    display_event = event_name
+    if _is_river_flood_alert(properties) and "river" not in event_name.lower():
+        display_event = f"River {event_name}"
     area_text = _format_alert_area(properties.get("areaDesc", "Peoria County"))
     expires_time = _format_alert_time(properties.get("expires"))
     sent_time = _format_alert_time(properties.get("sent"))
     emoji = _get_alert_emoji(event_name)
 
     lines = [
-        f"{emoji} NWS {event_name} for {area_text}.",
+        f"{emoji} NWS {display_event} for {area_text}.",
         "",
         f"Issued at {sent_time}",
         f"Until {expires_time}",
     ]
-
-    headline = properties.get("headline")
-    if headline and headline != event_name:
-        lines.append(headline)
 
     source_url = alert.get("id") or properties.get("@id")
     if source_url:

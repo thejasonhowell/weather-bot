@@ -161,10 +161,10 @@ Some flooding begins to bottomland not protected by levees.
 
 ### 🚨 NWS Alert Example
 ```
-⛈️ NWS Severe Thunderstorm Warning for Peoria County and nearby areas.
+🟩🌊 NWS River Flood Warning for Peoria County and nearby areas.
 
-Issued at 7:42 PM
-Until 8:30 PM
+Issued at 10:19 AM
+Until Jun 26 2:30 AM
 Source: https://api.weather.gov/alerts/urn:oid:...
 #peoriaweather
 ```
