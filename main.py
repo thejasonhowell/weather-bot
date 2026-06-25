@@ -102,7 +102,10 @@ _latest_weather_snapshot = None
 _last_storm_follow_up_check_epoch = 0
 _last_storm_follow_up_epoch = 0
 _pressure_history = []
-RIVER_GAUGE_ID = "PIAI2"
+RIVER_GAUGES = {
+    "PIAI2": "Illinois River at Peoria",
+    "PRAI2": "Illinois River at Peoria Lock and Dam",
+}
 RIVER_HISTORY_FILE = "river_history.json"
 POST_STATE_FILE = "post_state.json"
 RIVER_CHECK_INTERVAL = 30 * 60
@@ -756,18 +759,22 @@ def _nearest_river_impact(gauge: dict, stage_ft: float | None) -> str | None:
     return chosen.get("statement")
 
 
-def fetch_river_gauge():
-    url = f"https://api.water.noaa.gov/nwps/v1/gauges/{RIVER_GAUGE_ID}"
+def fetch_river_gauge(gauge_id: str):
+    url = f"https://api.water.noaa.gov/nwps/v1/gauges/{gauge_id}"
     try:
         response = requests.get(url, timeout=15)
         response.raise_for_status()
-        return response.json()
+        gauge = response.json()
+        gauge["_configured_gauge_id"] = gauge_id
+        return gauge
     except requests.RequestException as e:
-        logging.error(f"Error fetching river gauge data: {e}")
+        logging.error(f"Error fetching river gauge data for {gauge_id}: {e}")
         return None
 
 
 def format_river_status_post(gauge: dict) -> str:
+    gauge_id = gauge.get("_configured_gauge_id") or gauge.get("lid") or gauge.get("id") or ""
+    gauge_name = RIVER_GAUGES.get(gauge_id, gauge.get("name", "Illinois River at Peoria"))
     observed = gauge.get("status", {}).get("observed", {})
     forecast = gauge.get("status", {}).get("forecast", {})
     observed_stage = _safe_float(observed.get("primary"))
@@ -780,9 +787,9 @@ def format_river_status_post(gauge: dict) -> str:
     emoji = _river_emoji(lead_category)
 
     if _river_category_rank(observed_category) >= 1 and observed_stage is not None:
-        lead = f"{emoji} Illinois River at Peoria is in {observed_category} flood at {observed_stage:.1f} ft."
+        lead = f"{emoji} {gauge_name} is in {observed_category} flood at {observed_stage:.1f} ft."
     else:
-        lead = f"{emoji} Illinois River at Peoria is forecast to reach {forecast_category} flood."
+        lead = f"{emoji} {gauge_name} is forecast to reach {forecast_category} flood."
     lines = [
         lead,
         "",
@@ -811,78 +818,99 @@ def check_river_flood_status():
         return
     _last_river_check_epoch = now_epoch
 
-    gauge = fetch_river_gauge()
-    if not gauge:
-        return
-
-    observed = gauge.get("status", {}).get("observed", {})
-    forecast = gauge.get("status", {}).get("forecast", {})
-    observed_category = observed.get("floodCategory", "")
-    forecast_category = forecast.get("floodCategory", "")
-    observed_stage = _safe_float(observed.get("primary"))
-    forecast_stage = _safe_float(forecast.get("primary"))
-    observed_stage_text = f"{observed_stage:.1f} ft" if observed_stage is not None else "unknown stage"
-    forecast_stage_text = f"{forecast_stage:.1f} ft" if forecast_stage is not None else "unknown stage"
-
-    highest_rank = max(_river_category_rank(observed_category), _river_category_rank(forecast_category))
     history = _load_river_history()
-    should_post = False
+    gauge_histories = history.setdefault("gauges", {})
 
-    if highest_rank >= 1:
-        if not history.get("last_posted_epoch"):
-            should_post = True
-        elif history.get("observed_category") != observed_category:
-            should_post = True
-        elif history.get("forecast_category") != forecast_category:
-            should_post = True
-        elif (
-            forecast_stage is not None
-            and _safe_float(history.get("forecast_stage")) is not None
-            and abs(forecast_stage - float(history["forecast_stage"])) >= 0.5
-        ):
-            should_post = True
-        elif (now_epoch - float(history.get("last_posted_epoch", 0))) >= RIVER_POST_KEEPALIVE_SECONDS:
-            should_post = True
+    for gauge_id, gauge_name in RIVER_GAUGES.items():
+        gauge = fetch_river_gauge(gauge_id)
+        if not gauge:
+            continue
 
-    if highest_rank < 1:
-        logging.info(
-            "River check: below action stage (observed=%s %s, forecast=%s %s).",
-            observed_category or "no_flooding",
-            observed_stage_text,
-            forecast_category or "no_flooding",
-            forecast_stage_text,
-        )
-    elif not should_post:
-        logging.info(
-            "River check: no posting change (observed=%s %s, forecast=%s %s).",
-            observed_category or "unknown",
-            observed_stage_text,
-            forecast_category or "unknown",
-            forecast_stage_text,
-        )
+        observed = gauge.get("status", {}).get("observed", {})
+        forecast = gauge.get("status", {}).get("forecast", {})
+        observed_category = observed.get("floodCategory", "")
+        forecast_category = forecast.get("floodCategory", "")
+        observed_stage = _safe_float(observed.get("primary"))
+        forecast_stage = _safe_float(forecast.get("primary"))
+        observed_stage_text = f"{observed_stage:.1f} ft" if observed_stage is not None else "unknown stage"
+        forecast_stage_text = f"{forecast_stage:.1f} ft" if forecast_stage is not None else "unknown stage"
 
-    if should_post and observed_stage is not None:
-        logging.info(
-            "River check: posting update (observed=%s %s, forecast=%s %s).",
-            observed_category or "unknown",
-            observed_stage_text,
-            forecast_category or "unknown",
-            forecast_stage_text,
-        )
-        river_message = format_river_status_post(gauge)
-        post_to_bluesky(river_message)
-        send_telegram_message(river_message)
-        history["last_posted_epoch"] = now_epoch
-    elif should_post:
-        logging.warning("River check: update triggered but observed stage is unavailable.")
+        highest_rank = max(_river_category_rank(observed_category), _river_category_rank(forecast_category))
+        gauge_history = gauge_histories.setdefault(gauge_id, {})
+        if gauge_id == "PIAI2" and history.get("observed_category") and not gauge_history:
+            for key in (
+                "last_posted_epoch",
+                "observed_category",
+                "forecast_category",
+                "observed_stage",
+                "forecast_stage",
+                "last_checked_epoch",
+            ):
+                if key in history:
+                    gauge_history[key] = history[key]
 
-    history.update({
-        "observed_category": observed_category,
-        "forecast_category": forecast_category,
-        "observed_stage": observed_stage,
-        "forecast_stage": forecast_stage,
-        "last_checked_epoch": now_epoch,
-    })
+        should_post = False
+        if highest_rank >= 1:
+            if not gauge_history.get("last_posted_epoch"):
+                should_post = True
+            elif gauge_history.get("observed_category") != observed_category:
+                should_post = True
+            elif gauge_history.get("forecast_category") != forecast_category:
+                should_post = True
+            elif (
+                forecast_stage is not None
+                and _safe_float(gauge_history.get("forecast_stage")) is not None
+                and abs(forecast_stage - float(gauge_history["forecast_stage"])) >= 0.5
+            ):
+                should_post = True
+            elif (now_epoch - float(gauge_history.get("last_posted_epoch", 0))) >= RIVER_POST_KEEPALIVE_SECONDS:
+                should_post = True
+
+        if highest_rank < 1:
+            logging.info(
+                "River check %s: below action stage (observed=%s %s, forecast=%s %s).",
+                gauge_id,
+                observed_category or "no_flooding",
+                observed_stage_text,
+                forecast_category or "no_flooding",
+                forecast_stage_text,
+            )
+        elif not should_post:
+            logging.info(
+                "River check %s: no posting change (observed=%s %s, forecast=%s %s).",
+                gauge_id,
+                observed_category or "unknown",
+                observed_stage_text,
+                forecast_category or "unknown",
+                forecast_stage_text,
+            )
+
+        if should_post and observed_stage is not None:
+            logging.info(
+                "River check %s: posting update for %s (observed=%s %s, forecast=%s %s).",
+                gauge_id,
+                gauge_name,
+                observed_category or "unknown",
+                observed_stage_text,
+                forecast_category or "unknown",
+                forecast_stage_text,
+            )
+            river_message = format_river_status_post(gauge)
+            post_to_bluesky(river_message)
+            send_telegram_message(river_message)
+            gauge_history["last_posted_epoch"] = now_epoch
+        elif should_post:
+            logging.warning("River check %s: update triggered but observed stage is unavailable.", gauge_id)
+
+        gauge_history.update({
+            "name": gauge_name,
+            "observed_category": observed_category,
+            "forecast_category": forecast_category,
+            "observed_stage": observed_stage,
+            "forecast_stage": forecast_stage,
+            "last_checked_epoch": now_epoch,
+        })
+
     _save_river_history(history)
 
 

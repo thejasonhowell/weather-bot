@@ -39,7 +39,7 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
   - Posts new alerts to Bluesky and Telegram from the main bot process.
   - Dedupes alert posts locally with `alert_history.json`.
 - **River / Flood Awareness**
-  - Polls the NOAA NWPS river gauge for **Illinois River at Peoria (`PIAI2`)**.
+  - Polls NOAA NWPS river gauges for **Illinois River at Peoria (`PIAI2`)** and **Illinois River at Peoria Lock and Dam (`PRAI2`)**.
   - Posts separate river-status updates when flood category changes, crest forecasts shift, or a flood keepalive is needed.
 - **Posting Controls**
   - Uses a lighter overnight posting mode during quiet hours.
