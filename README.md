@@ -16,7 +16,7 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
   - Uses cleaner social rounding for wind, rain, and lightning distance.
   - Hides low-value fields such as UV or lightning when they do not matter.
   - Uses local sunrise/sunset times for Peoria so UV only appears during daylight.
-  - Adds afternoon/evening sunset timing and can send a once-daily pre-sunset notice.
+  - Adds morning sunrise and afternoon/evening sunset timing with optional once-daily pre-sunrise and pre-sunset notices.
 - **Temperature & Alerts**
   - Includes actual and **feels like** temperature in routine updates.
   - Sends **rapid temperature drop alerts** when the temperature falls **10°F or more** in about **1 hour** with a **3-hour cooldown**.
@@ -94,6 +94,15 @@ Current read: 78°F, light W wind, dry.
 #peoriaweather
 ```
 
+### 🌅 Sunrise Notice
+```
+Sunrise is about an hour away in Peoria.
+
+Sunrise today: 5:29 AM
+Current read: 67°F, calm air, dry.
+#peoriaweather
+```
+
 ### 📊 Daily Summary (11:59 PM)
 ```
 Peoria weather summary for 2026-06-18:
@@ -167,7 +176,7 @@ Until 8:30 PM
 2. **Scheduler Loop**
    - Every **15 minutes**: fetch and post the current weather update
    - Every **5 minutes**: check for new NWS alerts for `ILC143`
-   - Once per day: send a pre-sunset notice when sunset is within the configured lead time
+   - Once per day: send pre-sunrise and pre-sunset notices when each is within the configured lead time
    - Between routine cycles: watch for fast-changing storm conditions and send follow-up storm posts when warranted
    - On an internal interval: check the NOAA river gauge for Peoria flood-stage or crest changes
    - Every **30 minutes**: send BetterStack heartbeat
@@ -200,6 +209,7 @@ TWITTER_ACCESS_TOKEN_SECRET=your_twitter_access_token_secret
 WEATHERFLOW_API_TOKEN=your_weatherflow_api_token
 WEATHERFLOW_STATION_ID=your_station_id
 BETTERSTACK_HEARTBEAT_URL=https://uptime.betterstack.com/api/v1/heartbeat/your_token_here
+SUNRISE_NOTICE_MINUTES=60
 SUNSET_NOTICE_MINUTES=60
 ```
 

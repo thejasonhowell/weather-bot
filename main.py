@@ -108,12 +108,14 @@ ROUTINE_POST_KEEPALIVE_SECONDS = 2 * 3600
 QUIET_HOURS_KEEPALIVE_SECONDS = 4 * 3600
 STORM_FOLLOW_UP_CHECK_INTERVAL = 5 * 60
 STORM_FOLLOW_UP_COOLDOWN = 20 * 60
+SUNRISE_NOTICE_MINUTES = _env_int("SUNRISE_NOTICE_MINUTES", 60)
 SUNSET_NOTICE_MINUTES = _env_int("SUNSET_NOTICE_MINUTES", 60)
 _last_posted_weather_snapshot = None
 _last_posted_weather_epoch = 0
 _latest_weather_snapshot = None
 _last_storm_follow_up_check_epoch = 0
 _last_storm_follow_up_epoch = 0
+_last_sunrise_notice_date = None
 _last_sunset_notice_date = None
 _pressure_history = []
 RIVER_GAUGES = {
@@ -261,6 +263,16 @@ def _is_daylight(now: datetime | None = None) -> bool:
     return sun_times["sunrise"] <= now <= sun_times["sunset"]
 
 
+def _minutes_until_sunrise(now: datetime | None = None) -> int:
+    now = now or datetime.now(PEORIA_TIMEZONE)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=PEORIA_TIMEZONE)
+    else:
+        now = now.astimezone(PEORIA_TIMEZONE)
+    sunrise = _sun_times(now)["sunrise"]
+    return round((sunrise - now).total_seconds() / 60)
+
+
 def _minutes_until_sunset(now: datetime | None = None) -> int:
     now = now or datetime.now(PEORIA_TIMEZONE)
     if now.tzinfo is None:
@@ -269,6 +281,23 @@ def _minutes_until_sunset(now: datetime | None = None) -> int:
         now = now.astimezone(PEORIA_TIMEZONE)
     sunset = _sun_times(now)["sunset"]
     return round((sunset - now).total_seconds() / 60)
+
+
+def _sunrise_detail_line(now: datetime | None = None) -> str | None:
+    now = now or datetime.now(PEORIA_TIMEZONE)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=PEORIA_TIMEZONE)
+    else:
+        now = now.astimezone(PEORIA_TIMEZONE)
+
+    sunrise = _sun_times(now)["sunrise"]
+    minutes_until = round((sunrise - now).total_seconds() / 60)
+
+    if now.hour >= 12 or minutes_until < -30:
+        return None
+    if minutes_until < 0:
+        return f"Sunrise was {_friendly_time(sunrise)}"
+    return f"Sunrise {_friendly_time(sunrise)}"
 
 
 def _sunset_detail_line(now: datetime | None = None) -> str | None:
@@ -286,6 +315,26 @@ def _sunset_detail_line(now: datetime | None = None) -> str | None:
     if minutes_until < 0:
         return f"Sunset was {_friendly_time(sunset)}"
     return f"Sunset {_friendly_time(sunset)}"
+
+
+def _format_sunrise_notice(snapshot: dict, now: datetime | None = None) -> str:
+    now = now or datetime.now(PEORIA_TIMEZONE)
+    sunrise = _sun_times(now)["sunrise"]
+    minutes_until = max(0, _minutes_until_sunrise(now))
+    if minutes_until >= 90:
+        lead_text = f"Sunrise is about {round(minutes_until / 60)} hours away in Peoria."
+    elif minutes_until >= 45:
+        lead_text = "Sunrise is about an hour away in Peoria."
+    else:
+        lead_text = f"Sunrise is about {minutes_until} minutes away in Peoria."
+
+    return "\n".join([
+        lead_text,
+        "",
+        f"Sunrise today: {_friendly_time(sunrise)}",
+        f"Current read: {round(snapshot['current_temp_f'])}°F, {_headline_wind_phrase(snapshot['wind_speed_mph'], snapshot['wind_dir_cardinal'])}, {snapshot['headline_condition']}.",
+        "#peoriaweather",
+    ])
 
 
 def _format_sunset_notice(snapshot: dict, now: datetime | None = None) -> str:
@@ -361,6 +410,7 @@ def _save_post_state():
     payload = {
         "last_posted_weather_snapshot": _serialize_snapshot(_last_posted_weather_snapshot),
         "last_posted_weather_epoch": _last_posted_weather_epoch,
+        "last_sunrise_notice_date": _last_sunrise_notice_date,
         "last_sunset_notice_date": _last_sunset_notice_date,
     }
     try:
@@ -371,7 +421,8 @@ def _save_post_state():
 
 
 def _load_post_state():
-    global _last_posted_weather_snapshot, _last_posted_weather_epoch, _last_sunset_notice_date
+    global _last_posted_weather_snapshot, _last_posted_weather_epoch
+    global _last_sunrise_notice_date, _last_sunset_notice_date
 
     if not os.path.exists(POST_STATE_FILE):
         return
@@ -382,6 +433,7 @@ def _load_post_state():
 
         snapshot = _deserialize_snapshot(payload.get("last_posted_weather_snapshot"))
         epoch = float(payload.get("last_posted_weather_epoch", 0) or 0)
+        _last_sunrise_notice_date = payload.get("last_sunrise_notice_date")
         _last_sunset_notice_date = payload.get("last_sunset_notice_date")
 
         if snapshot:
@@ -1057,6 +1109,12 @@ def _record_weather_post(snapshot: dict, post_mode: str):
     _save_post_state()
 
 
+def _record_sunrise_notice(date_text: str):
+    global _last_sunrise_notice_date
+    _last_sunrise_notice_date = date_text
+    _save_post_state()
+
+
 def _record_sunset_notice(date_text: str):
     global _last_sunset_notice_date
     _last_sunset_notice_date = date_text
@@ -1558,6 +1616,9 @@ def format_weather_post(snapshot: dict, post_mode: str = "routine", followup_rea
             lines.append(dew_point_line)
         if snapshot["uv_index"] >= 3 and _is_daylight(snapshot["observed_at"]):
             lines.append(f"UV index {round(snapshot['uv_index'])}")
+        sunrise_line = _sunrise_detail_line(snapshot["observed_at"])
+        if sunrise_line:
+            lines.append(sunrise_line)
         sunset_line = _sunset_detail_line(snapshot["observed_at"])
         if sunset_line:
             lines.append(sunset_line)
@@ -1617,6 +1678,36 @@ def check_storm_follow_up():
     weather_message = format_weather_post(snapshot, post_mode="storm_followup", followup_reason=reason)
     post_weather_update(weather_message, snapshot, "storm_followup")
     _last_storm_follow_up_epoch = time.time()
+
+
+def check_sunrise_notice(now: datetime | None = None):
+    now = now or datetime.now(PEORIA_TIMEZONE)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=PEORIA_TIMEZONE)
+    else:
+        now = now.astimezone(PEORIA_TIMEZONE)
+
+    today = now.strftime("%Y-%m-%d")
+    if _last_sunrise_notice_date == today:
+        return
+
+    minutes_until = _minutes_until_sunrise(now)
+    if minutes_until < 0 or minutes_until > SUNRISE_NOTICE_MINUTES:
+        return
+
+    snapshot = fetch_current_weather_snapshot()
+    if not snapshot:
+        logging.warning("Sunrise notice skipped: could not fetch a weather snapshot.")
+        return
+
+    logging.info(
+        "Sunrise notice: posting %s minutes before sunrise (%s).",
+        minutes_until,
+        _sunrise_detail_line(now),
+    )
+    weather_message = _format_sunrise_notice(snapshot, now)
+    post_weather_update(weather_message, snapshot, "sunrise_notice")
+    _record_sunrise_notice(today)
 
 
 def check_sunset_notice(now: datetime | None = None):
@@ -1734,6 +1825,7 @@ def scheduler():
 
         check_nws_alerts()
         check_river_flood_status()
+        check_sunrise_notice(now)
         check_sunset_notice(now)
         if minute % 15 != 0:
             check_storm_follow_up()
