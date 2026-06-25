@@ -1909,19 +1909,39 @@ def _fit_bluesky_text(message: str) -> str:
 
     lines = message.splitlines()
     source_lines = [line for line in lines if line.startswith("Source: ")]
-    hashtag_lines = [line for line in lines if line.startswith("#")]
-    body_lines = [line for line in lines if line not in source_lines and line not in hashtag_lines]
+    body_lines = [line for line in lines if line not in source_lines and not line.startswith("#")]
+    header_lines = []
+    remaining_lines = body_lines
+    if body_lines:
+        header_lines = [body_lines[0]]
+        if len(body_lines) > 1 and body_lines[1] == "":
+            header_lines.append("")
+            remaining_lines = body_lines[2:]
+        else:
+            remaining_lines = body_lines[1:]
 
     suffix_lines = []
     if source_lines:
         suffix_lines.append(source_lines[-1])
-    if hashtag_lines:
-        suffix_lines.append(hashtag_lines[-1])
     suffix = ("\n" + "\n".join(suffix_lines)) if suffix_lines else ""
     budget = BLUESKY_CHAR_LIMIT - len(suffix)
 
+    priority_prefixes = ("Where:", "Stage:", "Flood stage:", "Forecast:", "What:", "When:")
+    low_priority_prefixes = ("Issued at", "Until ")
+    prioritized_lines = [line for line in remaining_lines if not line.startswith(low_priority_prefixes)]
+    low_priority_lines = [line for line in remaining_lines if line.startswith(low_priority_prefixes)]
+    ordered_lines = list(header_lines)
+    for prefix in priority_prefixes:
+        for line in prioritized_lines:
+            if line.startswith(prefix) and line not in ordered_lines:
+                ordered_lines.append(line)
+    for line in prioritized_lines:
+        if line not in ordered_lines:
+            ordered_lines.append(line)
+    ordered_lines.extend(low_priority_lines)
+
     kept_lines = []
-    for line in body_lines:
+    for line in ordered_lines:
         candidate = "\n".join(kept_lines + [line]).strip()
         if len(candidate) + len("\n...") <= budget:
             kept_lines.append(line)

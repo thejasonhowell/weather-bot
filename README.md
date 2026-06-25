@@ -41,7 +41,7 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
   - Polls active National Weather Service alerts for **Peoria County / ILC143**.
   - Posts new alerts to Bluesky and Telegram from the main bot process with a source link back to NWS.
   - Summarizes NWS alert details such as `What`, `Where`, `When`, and river stage details when available.
-  - Shortens only the Bluesky copy when a post would exceed the platform character limit; Telegram still receives the fuller message.
+  - Shortens only the Bluesky copy when a post would exceed the platform character limit, dropping hashtags before higher-value alert details such as river stage; Telegram still receives the fuller message.
   - Dedupes alert posts locally with `alert_history.json`.
 - **River / Flood Awareness**
   - Polls NOAA NWPS river gauges for **Illinois River at Peoria (`PIAI2`)** and **Illinois River at Peoria Lock and Dam (`PRAI2`)**.
