@@ -101,6 +101,7 @@ NWS_ALERT_ZONE = "ILC143"
 NWS_POINT_LAT = 40.6936
 NWS_POINT_LON = -89.5890
 NWS_FORECAST_CACHE_SECONDS = 60 * 60
+BLUESKY_CHAR_LIMIT = 300
 ALERT_HISTORY_FILE = "alert_history.json"
 _last_nws_alert_check_epoch = 0
 _nws_forecast_url = None
@@ -695,6 +696,72 @@ def _is_river_flood_alert(properties: dict) -> bool:
     return "flood" in text and "river" in text
 
 
+def _collapse_whitespace(text: str | None) -> str | None:
+    if not text:
+        return None
+    cleaned = " ".join(str(text).split())
+    return cleaned or None
+
+
+def _extract_nws_bullet(description: str, label: str) -> str | None:
+    marker = f"* {label.upper()}..."
+    collecting = False
+    collected = []
+
+    for raw_line in description.splitlines():
+        line = raw_line.strip()
+        if line.startswith("* ") and "..." in line:
+            if collecting:
+                break
+            if line.upper().startswith(marker):
+                collecting = True
+                collected.append(line.split("...", 1)[1])
+            continue
+        if collecting:
+            collected.append(line)
+
+    return _collapse_whitespace(" ".join(collected))
+
+
+def _extract_river_stage_lines(description: str) -> list[str]:
+    useful_lines = []
+    lines = description.splitlines()
+    for index, raw_line in enumerate(lines):
+        line = raw_line.strip().lstrip("-").strip()
+        lower = line.lower()
+        if not line:
+            continue
+        if "stage was" in lower:
+            useful_lines.append(f"Stage: {_collapse_whitespace(line)}")
+        elif lower.startswith("forecast") and "river" in lower:
+            next_line = ""
+            if index + 1 < len(lines):
+                candidate = lines[index + 1].strip().lstrip("-").strip()
+                if candidate and not candidate.startswith("* ") and not candidate.lower().startswith("flood stage"):
+                    next_line = f" {candidate}"
+            forecast_text = f"{line}{next_line}".replace("Forecast...", "")
+            useful_lines.append(f"Forecast: {_collapse_whitespace(forecast_text)}")
+        elif lower.startswith("flood stage"):
+            useful_lines.append(f"Flood stage: {_collapse_whitespace(line.replace('Flood stage is ', ''))}")
+        if len(useful_lines) >= 3:
+            break
+    return [line for line in useful_lines if line]
+
+
+def _format_nws_alert_summary_lines(properties: dict) -> list[str]:
+    description = properties.get("description") or ""
+    summary_lines = []
+    for label in ("WHAT", "WHERE", "WHEN"):
+        value = _extract_nws_bullet(description, label)
+        if value:
+            summary_lines.append(f"{label.title()}: {value}")
+
+    if _is_river_flood_alert(properties):
+        summary_lines.extend(_extract_river_stage_lines(description))
+
+    return summary_lines[:6]
+
+
 def _load_alert_history() -> dict:
     if os.path.exists(ALERT_HISTORY_FILE):
         try:
@@ -747,9 +814,12 @@ def format_nws_alert_post(alert) -> str:
     lines = [
         f"{emoji} NWS {display_event} for {area_text}.",
         "",
+    ]
+    lines.extend(_format_nws_alert_summary_lines(properties))
+    lines.extend([
         f"Issued at {sent_time}",
         f"Until {expires_time}",
-    ]
+    ])
 
     source_url = alert.get("id") or properties.get("@id")
     if source_url:
@@ -1833,12 +1903,51 @@ def check_sunset_notice(now: datetime | None = None):
 
 
 # Functions to post to social media platforms
+def _fit_bluesky_text(message: str) -> str:
+    if len(message) <= BLUESKY_CHAR_LIMIT:
+        return message
+
+    lines = message.splitlines()
+    source_lines = [line for line in lines if line.startswith("Source: ")]
+    hashtag_lines = [line for line in lines if line.startswith("#")]
+    body_lines = [line for line in lines if line not in source_lines and line not in hashtag_lines]
+
+    suffix_lines = []
+    if source_lines:
+        suffix_lines.append(source_lines[-1])
+    if hashtag_lines:
+        suffix_lines.append(hashtag_lines[-1])
+    suffix = ("\n" + "\n".join(suffix_lines)) if suffix_lines else ""
+    budget = BLUESKY_CHAR_LIMIT - len(suffix)
+
+    kept_lines = []
+    for line in body_lines:
+        candidate = "\n".join(kept_lines + [line]).strip()
+        if len(candidate) + len("\n...") <= budget:
+            kept_lines.append(line)
+
+    body = "\n".join(kept_lines).strip()
+    body = f"{body}\n..." if body else "..."
+    fitted = f"{body}{suffix}".strip()
+
+    if len(fitted) > BLUESKY_CHAR_LIMIT:
+        fitted = fitted[: BLUESKY_CHAR_LIMIT - 3].rstrip() + "..."
+    return fitted
+
+
 def post_to_bluesky(weather_message):
     if session is None:
         logging.warning("Bluesky session not initialized. Skipping Bluesky post.")
         return False
+    post_message = _fit_bluesky_text(weather_message)
+    if post_message != weather_message:
+        logging.info(
+            "Bluesky: shortened post from %s to %s characters.",
+            len(weather_message),
+            len(post_message),
+        )
     try:
-        post_text(session, weather_message)
+        post_text(session, post_message)
         logging.info("Bluesky: Weather data posted.")
         return True
     except Exception as e:
