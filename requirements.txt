@@ -3,4 +3,5 @@ requests>=2.31.0
 Mastodon.py>=1.8.1
 python-dotenv>=1.0.0
 python-telegram-bot>=20.0
+astral>=3.2
 bsky-bridge  # (If this is a custom module, you’ll have to install it manually or via a GitHub repo)

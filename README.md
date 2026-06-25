@@ -15,6 +15,7 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
   - Varies the lead sentence by condition so posts feel more like a local station update and less like a fixed template.
   - Uses cleaner social rounding for wind, rain, and lightning distance.
   - Hides low-value fields such as UV or lightning when they do not matter.
+  - Uses local sunrise/sunset times for Peoria so UV only appears during daylight.
 - **Temperature & Alerts**
   - Includes actual and **feels like** temperature in routine updates.
   - Sends **rapid temperature drop alerts** when the temperature falls **10°F or more** in about **1 hour** with a **3-hour cooldown**.

@@ -23,6 +23,9 @@ import sys
 import time
 import math
 from datetime import datetime
+from zoneinfo import ZoneInfo
+from astral import LocationInfo
+from astral.sun import sun
 from telegram import Bot  # Import for Telegram Bot API
 import asyncio  # For asynchronous operations
 import signal  # To handle signals (force update)
@@ -111,6 +114,8 @@ POST_STATE_FILE = "post_state.json"
 RIVER_CHECK_INTERVAL = 30 * 60
 RIVER_POST_KEEPALIVE_SECONDS = 12 * 3600
 _last_river_check_epoch = 0
+PEORIA_TIMEZONE = ZoneInfo("America/Chicago")
+PEORIA_LOCATION = LocationInfo("Peoria", "USA", "America/Chicago", 40.6936, -89.5890)
 
 
 # Safely initialize Bluesky session
@@ -224,6 +229,25 @@ def wind_emoji(sustained, gust):
 def _friendly_time(dt: datetime | None = None) -> str:
     dt = dt or datetime.now()
     return dt.strftime("%I:%M %p").lstrip("0")
+
+
+def _sun_times(now: datetime | None = None) -> dict:
+    now = now or datetime.now(PEORIA_TIMEZONE)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=PEORIA_TIMEZONE)
+    else:
+        now = now.astimezone(PEORIA_TIMEZONE)
+    return sun(PEORIA_LOCATION.observer, date=now.date(), tzinfo=PEORIA_TIMEZONE)
+
+
+def _is_daylight(now: datetime | None = None) -> bool:
+    now = now or datetime.now(PEORIA_TIMEZONE)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=PEORIA_TIMEZONE)
+    else:
+        now = now.astimezone(PEORIA_TIMEZONE)
+    sun_times = _sun_times(now)
+    return sun_times["sunrise"] <= now <= sun_times["sunset"]
 
 
 def _snapshot_log_summary(snapshot: dict | None) -> str:
@@ -1466,7 +1490,7 @@ def format_weather_post(snapshot: dict, post_mode: str = "routine", followup_rea
         dew_point_line = _dew_point_line(snapshot["current_temp_f"], snapshot.get("dew_point_f"))
         if dew_point_line:
             lines.append(dew_point_line)
-        if snapshot["uv_index"] >= 3:
+        if snapshot["uv_index"] >= 3 and _is_daylight(snapshot["observed_at"]):
             lines.append(f"UV index {round(snapshot['uv_index'])}")
 
     if _should_include_hashtag(
