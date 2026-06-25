@@ -484,6 +484,32 @@ def _format_alert_time(iso_time: str | None) -> str:
 
 def _get_alert_emoji(event_name: str) -> str:
     text = event_name.upper()
+    specific_badges = [
+        ("TORNADO WARNING", "🟥🌪️"),
+        ("TORNADO WATCH", "🟨🌪️"),
+        ("HURRICANE WARNING", "🟥🌀"),
+        ("HURRICANE WATCH", "🟪🌀"),
+        ("TROPICAL STORM WARNING", "🟥🌀"),
+        ("TROPICAL STORM WATCH", "🟧🌀"),
+        ("STORM SURGE WARNING", "🟪🌊"),
+        ("STORM SURGE WATCH", "🟪🌊"),
+        ("SEVERE THUNDERSTORM WARNING", "🟧⛈️"),
+        ("SEVERE THUNDERSTORM WATCH", "🟪⛈️"),
+        ("FLASH FLOOD WARNING", "🟥🌊"),
+        ("FLOOD WARNING", "🟩🌊"),
+        ("FLOOD WATCH", "🟩🌊"),
+        ("FLOOD ADVISORY", "🟩🌊"),
+        ("SPECIAL WEATHER STATEMENT", "🟨⚠️"),
+        ("EXTREME WIND WARNING", "🟧💨"),
+        ("HIGH WIND WARNING", "🟧💨"),
+        ("WIND ADVISORY", "🟨💨"),
+        ("EXCESSIVE HEAT WARNING", "🟪🌡️"),
+        ("HEAT ADVISORY", "🟧🌡️"),
+    ]
+    for alert_text, badge in specific_badges:
+        if alert_text in text:
+            return badge
+
     if "TORNADO" in text:
         return "🌪️"
     if "SEVERE THUNDERSTORM" in text:
