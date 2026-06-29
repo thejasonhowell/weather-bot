@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Last Modified: 2026-06-28
+# Last Modified: 2026-06-29
 # To force an update of the weather bot while it's running,
 # send a SIGUSR1 signal to its process.
 # For instance, if the process ID is 1234, run:
@@ -22,7 +22,7 @@ import json
 import sys
 import time
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from astral import LocationInfo
 from astral.sun import sun
@@ -151,6 +151,17 @@ SPC_RISK_NAMES = {
     "HIGH": "High Risk",
 }
 _last_spc_check_epoch = 0
+
+# USGS earthquake tracking
+EARTHQUAKE_HISTORY_FILE = "earthquake_history.json"
+EARTHQUAKE_CHECK_INTERVAL = 30 * 60
+EARTHQUAKE_LOOKBACK_HOURS = 24
+EARTHQUAKE_LOCAL_RADIUS_KM = 250
+EARTHQUAKE_REGIONAL_RADIUS_KM = 750
+EARTHQUAKE_LOCAL_MIN_MAGNITUDE = 2.5
+EARTHQUAKE_REGIONAL_MIN_MAGNITUDE = 4.0
+USGS_EARTHQUAKE_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
+_last_earthquake_check_epoch = 0
 
 # Posting behavior tuning
 QUIET_HOURS_START = 23
@@ -1220,6 +1231,180 @@ def check_spc_outlooks():
         }
 
     _save_spc_history(history)
+
+
+def _load_earthquake_history() -> dict:
+    if os.path.exists(EARTHQUAKE_HISTORY_FILE):
+        try:
+            with open(EARTHQUAKE_HISTORY_FILE, "r") as file:
+                return json.load(file)
+        except Exception as e:
+            logging.error(f"Error loading earthquake history: {e}")
+    return {}
+
+
+def _save_earthquake_history(history: dict):
+    try:
+        with open(EARTHQUAKE_HISTORY_FILE, "w") as file:
+            json.dump(history, file)
+    except Exception as e:
+        logging.error(f"Error saving earthquake history: {e}")
+
+
+def _cleanup_earthquake_history(history: dict) -> dict:
+    now_epoch = time.time()
+    return {key: value for key, value in history.items() if now_epoch - value < 7 * 86400}
+
+
+def _distance_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    radius_miles = 3958.8
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+    )
+    return radius_miles * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def fetch_usgs_earthquakes():
+    start_time = (datetime.utcnow() - timedelta(hours=EARTHQUAKE_LOOKBACK_HOURS)).strftime("%Y-%m-%dT%H:%M:%S")
+    params = {
+        "format": "geojson",
+        "latitude": NWS_POINT_LAT,
+        "longitude": NWS_POINT_LON,
+        "maxradiuskm": EARTHQUAKE_REGIONAL_RADIUS_KM,
+        "minmagnitude": EARTHQUAKE_LOCAL_MIN_MAGNITUDE,
+        "starttime": start_time,
+        "orderby": "time",
+    }
+    try:
+        response = requests.get(
+            USGS_EARTHQUAKE_URL,
+            params=params,
+            headers={"User-Agent": "PeoriaWeatherBot/1.0"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        return response.json().get("features", [])
+    except requests.RequestException as e:
+        logging.error(f"Error fetching USGS earthquakes: {e}")
+    except ValueError as e:
+        logging.error(f"Error parsing USGS earthquakes: {e}")
+    return []
+
+
+def _earthquake_is_postworthy(event: dict) -> tuple[bool, str]:
+    properties = event.get("properties") or {}
+    geometry = event.get("geometry") or {}
+    coordinates = geometry.get("coordinates") or []
+    magnitude = _safe_float(properties.get("mag"))
+    felt_reports = int(properties.get("felt") or 0)
+
+    if magnitude is None or len(coordinates) < 2:
+        return False, "missing magnitude/location"
+
+    event_lon = _safe_float(coordinates[0])
+    event_lat = _safe_float(coordinates[1])
+    if event_lat is None or event_lon is None:
+        return False, "missing coordinates"
+
+    distance_mi = _distance_miles(NWS_POINT_LAT, NWS_POINT_LON, event_lat, event_lon)
+    distance_km = distance_mi / 0.621371
+    event["peoria_distance_mi"] = distance_mi
+
+    if distance_km <= EARTHQUAKE_LOCAL_RADIUS_KM and magnitude >= EARTHQUAKE_LOCAL_MIN_MAGNITUDE:
+        return True, "local magnitude threshold"
+    if distance_km <= EARTHQUAKE_REGIONAL_RADIUS_KM and magnitude >= EARTHQUAKE_REGIONAL_MIN_MAGNITUDE:
+        return True, "regional magnitude threshold"
+    if distance_km <= EARTHQUAKE_REGIONAL_RADIUS_KM and felt_reports >= 10 and magnitude >= EARTHQUAKE_LOCAL_MIN_MAGNITUDE:
+        return True, "felt reports"
+    return False, f"below threshold (M{magnitude:.1f}, {round(distance_mi)} mi)"
+
+
+def _format_usgs_event_time(epoch_ms: int | float | None) -> str:
+    if not epoch_ms:
+        return "unknown"
+    try:
+        event_time = datetime.fromtimestamp(float(epoch_ms) / 1000, tz=PEORIA_TIMEZONE)
+        return event_time.strftime("%-I:%M %p")
+    except (OSError, ValueError):
+        return "unknown"
+
+
+def format_earthquake_post(event: dict) -> str:
+    properties = event.get("properties") or {}
+    geometry = event.get("geometry") or {}
+    coordinates = geometry.get("coordinates") or []
+    magnitude = _safe_float(properties.get("mag")) or 0.0
+    place = properties.get("place") or "near the Peoria region"
+    depth_km = _safe_float(coordinates[2]) if len(coordinates) > 2 else None
+    depth_mi = depth_km * 0.621371 if depth_km is not None else None
+    distance_mi = event.get("peoria_distance_mi")
+    if distance_mi is None and len(coordinates) >= 2:
+        event_lon = _safe_float(coordinates[0])
+        event_lat = _safe_float(coordinates[1])
+        if event_lat is not None and event_lon is not None:
+            distance_mi = _distance_miles(NWS_POINT_LAT, NWS_POINT_LON, event_lat, event_lon)
+
+    lines = [
+        "🟫 USGS earthquake report for the Peoria region.",
+        "",
+        f"Magnitude {magnitude:.1f}",
+        f"Location: {place}",
+    ]
+    if distance_mi is not None:
+        lines.append(f"Distance from Peoria: about {round(distance_mi)} mi")
+    if depth_mi is not None:
+        lines.append(f"Depth: {depth_mi:.1f} mi")
+    lines.append(f"Reported: {_format_usgs_event_time(properties.get('time'))}")
+    if properties.get("felt"):
+        lines.append(f"Felt reports: {properties.get('felt')}")
+    lines.extend([
+        f"Source: {properties.get('url') or 'https://earthquake.usgs.gov/earthquakes/map/'}",
+        "#peoriaweather",
+    ])
+    return "\n".join(lines)
+
+
+def check_usgs_earthquakes():
+    global _last_earthquake_check_epoch
+
+    now_epoch = time.time()
+    if now_epoch - _last_earthquake_check_epoch < EARTHQUAKE_CHECK_INTERVAL:
+        return
+    _last_earthquake_check_epoch = now_epoch
+
+    history = _cleanup_earthquake_history(_load_earthquake_history())
+    events = fetch_usgs_earthquakes()
+
+    if not events:
+        logging.info("USGS earthquake check: no regional events returned.")
+        _save_earthquake_history(history)
+        return
+
+    for event in events:
+        event_id = event.get("id") or event.get("properties", {}).get("code")
+        if not event_id:
+            continue
+        if event_id in history:
+            continue
+
+        postworthy, reason = _earthquake_is_postworthy(event)
+        if not postworthy:
+            logging.info("USGS earthquake %s skipped: %s.", event_id, reason)
+            history[event_id] = now_epoch
+            continue
+
+        logging.info("USGS earthquake %s: posting update (%s).", event_id, reason)
+        earthquake_message = format_earthquake_post(event)
+        post_to_bluesky(earthquake_message)
+        send_telegram_message(earthquake_message)
+        history[event_id] = now_epoch
+
+    _save_earthquake_history(history)
 
 
 def _safe_float(value):
@@ -2339,6 +2524,7 @@ def scheduler():
 
         check_nws_alerts()
         check_spc_outlooks()
+        check_usgs_earthquakes()
         check_river_flood_status()
         check_sunrise_notice(now)
         check_sunset_notice(now)

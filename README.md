@@ -48,6 +48,10 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
   - Uses Peoria's coordinates against SPC risk polygons instead of relying on whether the text literally says `Peoria`.
   - Posts when Peoria is inside a **Marginal Risk** or higher and that local risk signature changes.
   - Dedupes SPC outlook posts locally with `spc_history.json`.
+- **USGS Earthquake Awareness**
+  - Checks the official USGS earthquake API for regional earthquakes near Peoria.
+  - Posts only for locally meaningful events: **M2.5+ within 250 km**, **M4.0+ within 750 km**, or notable felt-report activity.
+  - Dedupes earthquake posts locally with `earthquake_history.json`.
 - **River / Flood Awareness**
   - Polls NOAA NWPS river gauges for **Illinois River at Peoria (`PIAI2`)** and **Illinois River at Peoria Lock and Dam (`PRAI2`)**.
   - Posts separate river-status updates when flood category changes, crest forecasts shift, or a flood keepalive is needed.
@@ -189,6 +193,19 @@ Source: https://www.spc.noaa.gov/products/outlook/day1otlk.html
 #peoriaweather
 ```
 
+### 🟫 USGS Earthquake Example
+```
+🟫 USGS earthquake report for the Peoria region.
+
+Magnitude 3.1
+Location: 8 mi SE of Havana, Illinois
+Distance from Peoria: about 38 mi
+Depth: 5.2 mi
+Reported: 2:14 AM
+Source: https://earthquake.usgs.gov/earthquakes/eventpage/example
+#peoriaweather
+```
+
 ---
 
 ## ⚙️ How It Works
@@ -200,6 +217,7 @@ Source: https://www.spc.noaa.gov/products/outlook/day1otlk.html
    - Every **15 minutes**: fetch and post the current weather update
    - Every **5 minutes**: check for new NWS alerts for `ILC143`
    - Every **30 minutes**: check SPC Day 1/2/3 outlook polygons for Peoria risk changes
+   - Every **30 minutes**: check USGS earthquake data for locally meaningful regional events
    - About once per hour as needed: refresh a short NWS forecast peek for routine posts
    - Once per day: send pre-sunrise and pre-sunset notices when each is within the configured lead time
    - Between routine cycles: watch for fast-changing storm conditions and send follow-up storm posts when warranted
@@ -212,6 +230,7 @@ Source: https://www.spc.noaa.gov/products/outlook/day1otlk.html
    - Maintains rolling in-memory state for rain events, lightning events, pressure trends, rapid temp-drop alerts, storm follow-up thresholds, and daily summary values
    - Stores seen NWS alerts in `alert_history.json` so the same alert is not reposted repeatedly
    - Stores last posted SPC outlook signatures in `spc_history.json`
+   - Stores seen USGS earthquake IDs in `earthquake_history.json`
    - Stores last river flood state in `river_history.json` for category/crest change detection
 
 ---
