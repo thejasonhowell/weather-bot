@@ -762,6 +762,32 @@ def _format_nws_alert_summary_lines(properties: dict) -> list[str]:
     return summary_lines[:6]
 
 
+def _nws_office_source_url(properties: dict) -> str:
+    office_id = None
+    parameters = properties.get("parameters") or {}
+
+    for vtec in parameters.get("VTEC", []):
+        parts = str(vtec).split(".")
+        if len(parts) > 3 and parts[3].startswith("K"):
+            office_id = parts[3][1:]
+            break
+
+    if not office_id:
+        for identifier in parameters.get("AWIPSidentifier", []):
+            text = str(identifier)
+            if len(text) >= 3:
+                office_id = text[-3:]
+                break
+
+    if office_id:
+        return f"https://www.weather.gov/{office_id.lower()}/"
+
+    web_url = properties.get("web")
+    if web_url and web_url != "http://www.weather.gov":
+        return web_url.replace("http://", "https://")
+    return "https://www.weather.gov/alerts"
+
+
 def _load_alert_history() -> dict:
     if os.path.exists(ALERT_HISTORY_FILE):
         try:
@@ -821,9 +847,7 @@ def format_nws_alert_post(alert) -> str:
         f"Until {expires_time}",
     ])
 
-    source_url = alert.get("id") or properties.get("@id")
-    if source_url:
-        lines.append(f"Source: {source_url}")
+    lines.append(f"Source: {_nws_office_source_url(properties)}")
 
     lines.append("#peoriaweather")
     return "\n".join(lines)

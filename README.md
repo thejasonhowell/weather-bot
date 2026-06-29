@@ -39,7 +39,7 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
   - Includes closest strike distance and time when available.
 - **NWS Alerts**
   - Polls active National Weather Service alerts for **Peoria County / ILC143**.
-  - Posts new alerts to Bluesky and Telegram from the main bot process with a source link back to NWS.
+  - Posts new alerts to Bluesky and Telegram from the main bot process with a cleaner NWS office source link.
   - Summarizes NWS alert details such as `What`, `Where`, `When`, and river stage details when available.
   - Shortens only the Bluesky copy when a post would exceed the platform character limit, dropping hashtags before higher-value alert details such as river stage; Telegram still receives the fuller message.
   - Dedupes alert posts locally with `alert_history.json`, including paired NWS alert records that differ only by their final numeric suffix.
@@ -170,7 +170,7 @@ Where: Illinois River at Peoria.
 When: Until further notice.
 Stage: At 9:45 AM CDT Thursday the stage was 20.6 feet.
 Flood stage: 18.0 feet.
-Source: https://api.weather.gov/alerts/urn:oid:...
+Source: https://www.weather.gov/ilx/
 #peoriaweather
 ```
 
