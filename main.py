@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Last Modified: 2026-06-25
+# Last Modified: 2026-06-28
 # To force an update of the weather bot while it's running,
 # send a SIGUSR1 signal to its process.
 # For instance, if the process ID is 1234, run:
@@ -109,6 +109,48 @@ _forecast_peek_cache = {
     "epoch": 0,
     "line": None,
 }
+
+# SPC outlook tracking
+SPC_HISTORY_FILE = "spc_history.json"
+SPC_CHECK_INTERVAL = 30 * 60
+SPC_MIN_POST_RISK = "MRGL"
+SPC_OUTLOOK_PRODUCTS = [
+    {
+        "key": "day1",
+        "label": "Day 1",
+        "geojson_url": "https://www.spc.noaa.gov/products/outlook/day1otlk_cat.nolyr.geojson",
+        "source_url": "https://www.spc.noaa.gov/products/outlook/day1otlk.html",
+    },
+    {
+        "key": "day2",
+        "label": "Day 2",
+        "geojson_url": "https://www.spc.noaa.gov/products/outlook/day2otlk_cat.nolyr.geojson",
+        "source_url": "https://www.spc.noaa.gov/products/outlook/day2otlk.html",
+    },
+    {
+        "key": "day3",
+        "label": "Day 3",
+        "geojson_url": "https://www.spc.noaa.gov/products/outlook/day3otlk_cat.nolyr.geojson",
+        "source_url": "https://www.spc.noaa.gov/products/outlook/day3otlk.html",
+    },
+]
+SPC_RISK_RANKS = {
+    "TSTM": 1,
+    "MRGL": 2,
+    "SLGT": 3,
+    "ENH": 4,
+    "MDT": 5,
+    "HIGH": 6,
+}
+SPC_RISK_NAMES = {
+    "TSTM": "General Thunderstorms",
+    "MRGL": "Marginal Risk",
+    "SLGT": "Slight Risk",
+    "ENH": "Enhanced Risk",
+    "MDT": "Moderate Risk",
+    "HIGH": "High Risk",
+}
+_last_spc_check_epoch = 0
 
 # Posting behavior tuning
 QUIET_HOURS_START = 23
@@ -963,6 +1005,221 @@ def check_nws_alerts():
         history[history_key] = now_epoch
 
     _save_alert_history(history)
+
+
+def _load_spc_history() -> dict:
+    if os.path.exists(SPC_HISTORY_FILE):
+        try:
+            with open(SPC_HISTORY_FILE, "r") as file:
+                return json.load(file)
+        except Exception as e:
+            logging.error(f"Error loading SPC history: {e}")
+    return {}
+
+
+def _save_spc_history(history: dict):
+    try:
+        with open(SPC_HISTORY_FILE, "w") as file:
+            json.dump(history, file)
+    except Exception as e:
+        logging.error(f"Error saving SPC history: {e}")
+
+
+def _spc_risk_rank(label: str | None) -> int:
+    return SPC_RISK_RANKS.get(str(label or "").upper(), 0)
+
+
+def _point_in_ring(lon: float, lat: float, ring: list) -> bool:
+    inside = False
+    if len(ring) < 3:
+        return False
+
+    j = len(ring) - 1
+    for i, point in enumerate(ring):
+        prev = ring[j]
+        try:
+            xi, yi = float(point[0]), float(point[1])
+            xj, yj = float(prev[0]), float(prev[1])
+        except (TypeError, ValueError, IndexError):
+            j = i
+            continue
+
+        intersects = ((yi > lat) != (yj > lat)) and (
+            lon < (xj - xi) * (lat - yi) / ((yj - yi) or 1e-12) + xi
+        )
+        if intersects:
+            inside = not inside
+        j = i
+
+    return inside
+
+
+def _point_in_polygon(lon: float, lat: float, polygon: list) -> bool:
+    if not polygon or not _point_in_ring(lon, lat, polygon[0]):
+        return False
+    return not any(_point_in_ring(lon, lat, hole) for hole in polygon[1:])
+
+
+def _point_in_geojson_geometry(lon: float, lat: float, geometry: dict) -> bool:
+    geometry_type = geometry.get("type")
+    coordinates = geometry.get("coordinates") or []
+
+    if geometry_type == "Polygon":
+        return _point_in_polygon(lon, lat, coordinates)
+    if geometry_type == "MultiPolygon":
+        return any(_point_in_polygon(lon, lat, polygon) for polygon in coordinates)
+    return False
+
+
+def fetch_spc_outlook(product: dict) -> dict | None:
+    try:
+        response = requests.get(
+            product["geojson_url"],
+            headers={"User-Agent": "PeoriaWeatherBot/1.0"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logging.error(f"Error fetching SPC {product['label']} outlook: {e}")
+    except ValueError as e:
+        logging.error(f"Error parsing SPC {product['label']} outlook: {e}")
+    return None
+
+
+def _spc_outlook_for_peoria(product: dict) -> dict | None:
+    data = fetch_spc_outlook(product)
+    if not data:
+        return None
+
+    peoria_lon = NWS_POINT_LON
+    peoria_lat = NWS_POINT_LAT
+    matching_outlooks = []
+    for feature in data.get("features", []):
+        geometry = feature.get("geometry") or {}
+        if not _point_in_geojson_geometry(peoria_lon, peoria_lat, geometry):
+            continue
+
+        properties = feature.get("properties") or {}
+        label = str(properties.get("LABEL", "")).upper()
+        matching_outlooks.append({
+            "label": label,
+            "rank": _spc_risk_rank(label),
+            "name": properties.get("LABEL2") or SPC_RISK_NAMES.get(label, label),
+            "issue": properties.get("ISSUE_ISO"),
+            "valid": properties.get("VALID_ISO"),
+            "expire": properties.get("EXPIRE_ISO"),
+            "forecaster": properties.get("FORECASTER"),
+        })
+
+    if not matching_outlooks:
+        return None
+
+    strongest = max(matching_outlooks, key=lambda outlook: outlook["rank"])
+    strongest["product_key"] = product["key"]
+    strongest["product_label"] = product["label"]
+    strongest["source_url"] = product["source_url"]
+    return strongest
+
+
+def _spc_time_range(valid_iso: str | None, expire_iso: str | None) -> str | None:
+    valid_time = _format_alert_time(valid_iso)
+    expire_time = _format_alert_time(expire_iso)
+    if valid_time == "unknown" and expire_time == "unknown":
+        return None
+    if expire_time == "unknown":
+        return f"Valid from {valid_time}"
+    if valid_time == "unknown":
+        return f"Valid until {expire_time}"
+    return f"Valid {valid_time} to {expire_time}"
+
+
+def format_spc_outlook_post(outlook: dict) -> str:
+    risk_label = outlook.get("label", "")
+    risk_name = SPC_RISK_NAMES.get(risk_label, outlook.get("name", risk_label))
+    product_label = outlook.get("product_label", "SPC outlook")
+    timing = _spc_time_range(outlook.get("valid"), outlook.get("expire"))
+
+    lines = [
+        f"🟧 SPC has Peoria in a {risk_name} for severe storms.",
+        "",
+        f"Outlook: {product_label}",
+    ]
+    if timing:
+        lines.append(f"Timing: {timing}")
+    lines.extend([
+        f"Source: {outlook.get('source_url')}",
+        "#peoriaweather",
+    ])
+    return "\n".join(lines)
+
+
+def check_spc_outlooks():
+    global _last_spc_check_epoch
+
+    now_epoch = time.time()
+    if now_epoch - _last_spc_check_epoch < SPC_CHECK_INTERVAL:
+        return
+    _last_spc_check_epoch = now_epoch
+
+    history = _load_spc_history()
+    min_rank = _spc_risk_rank(SPC_MIN_POST_RISK)
+
+    for product in SPC_OUTLOOK_PRODUCTS:
+        outlook = _spc_outlook_for_peoria(product)
+        if not outlook:
+            logging.info("SPC %s: Peoria is not inside a categorical outlook.", product["label"])
+            history[product["key"]] = {
+                "signature": "none",
+                "updated": now_epoch,
+            }
+            continue
+
+        signature = "|".join([
+            outlook.get("product_key", ""),
+            outlook.get("label", ""),
+            str(outlook.get("issue") or ""),
+            str(outlook.get("valid") or ""),
+            str(outlook.get("expire") or ""),
+        ])
+        previous_signature = history.get(product["key"], {}).get("signature")
+
+        if outlook["rank"] < min_rank:
+            logging.info(
+                "SPC %s: Peoria is inside %s, below posting threshold.",
+                product["label"],
+                outlook.get("label", "unknown"),
+            )
+            history[product["key"]] = {
+                "signature": signature,
+                "updated": now_epoch,
+                "risk": outlook.get("label"),
+            }
+            continue
+
+        if signature == previous_signature:
+            logging.info(
+                "SPC %s: no posting change for Peoria (%s).",
+                product["label"],
+                outlook.get("label", "unknown"),
+            )
+            continue
+
+        logging.info(
+            "SPC %s: posting Peoria outlook update (%s).",
+            product["label"],
+            outlook.get("label", "unknown"),
+        )
+        spc_message = format_spc_outlook_post(outlook)
+        post_to_bluesky(spc_message)
+        send_telegram_message(spc_message)
+        history[product["key"]] = {
+            "signature": signature,
+            "updated": now_epoch,
+            "risk": outlook.get("label"),
+        }
+
+    _save_spc_history(history)
 
 
 def _safe_float(value):
@@ -2081,6 +2338,7 @@ def scheduler():
         today = now.strftime("%Y-%m-%d")
 
         check_nws_alerts()
+        check_spc_outlooks()
         check_river_flood_status()
         check_sunrise_notice(now)
         check_sunset_notice(now)

@@ -43,6 +43,11 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
   - Summarizes NWS alert details such as `What`, `Where`, `When`, and river stage details when available.
   - Shortens only the Bluesky copy when a post would exceed the platform character limit, dropping hashtags before higher-value alert details such as river stage; Telegram still receives the fuller message.
   - Dedupes alert posts locally with `alert_history.json`, including paired NWS alert records that differ only by their final numeric suffix.
+- **Storm Prediction Center Outlooks**
+  - Checks official SPC Day 1, Day 2, and Day 3 categorical outlook GeoJSON.
+  - Uses Peoria's coordinates against SPC risk polygons instead of relying on whether the text literally says `Peoria`.
+  - Posts when Peoria is inside a **Marginal Risk** or higher and that local risk signature changes.
+  - Dedupes SPC outlook posts locally with `spc_history.json`.
 - **River / Flood Awareness**
   - Polls NOAA NWPS river gauges for **Illinois River at Peoria (`PIAI2`)** and **Illinois River at Peoria Lock and Dam (`PRAI2`)**.
   - Posts separate river-status updates when flood category changes, crest forecasts shift, or a flood keepalive is needed.
@@ -174,6 +179,16 @@ Source: https://www.weather.gov/ilx/
 #peoriaweather
 ```
 
+### 🟧 SPC Outlook Example
+```
+🟧 SPC has Peoria in a Slight Risk for severe storms.
+
+Outlook: Day 1
+Timing: Valid 8:00 PM to Jun 30 7:00 AM
+Source: https://www.spc.noaa.gov/products/outlook/day1otlk.html
+#peoriaweather
+```
+
 ---
 
 ## ⚙️ How It Works
@@ -184,6 +199,7 @@ Source: https://www.weather.gov/ilx/
 2. **Scheduler Loop**
    - Every **15 minutes**: fetch and post the current weather update
    - Every **5 minutes**: check for new NWS alerts for `ILC143`
+   - Every **30 minutes**: check SPC Day 1/2/3 outlook polygons for Peoria risk changes
    - About once per hour as needed: refresh a short NWS forecast peek for routine posts
    - Once per day: send pre-sunrise and pre-sunset notices when each is within the configured lead time
    - Between routine cycles: watch for fast-changing storm conditions and send follow-up storm posts when warranted
@@ -195,6 +211,7 @@ Source: https://www.weather.gov/ilx/
 4. **Event Tracking**
    - Maintains rolling in-memory state for rain events, lightning events, pressure trends, rapid temp-drop alerts, storm follow-up thresholds, and daily summary values
    - Stores seen NWS alerts in `alert_history.json` so the same alert is not reposted repeatedly
+   - Stores last posted SPC outlook signatures in `spc_history.json`
    - Stores last river flood state in `river_history.json` for category/crest change detection
 
 ---
