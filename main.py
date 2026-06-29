@@ -897,6 +897,13 @@ def fetch_nws_forecast_peek() -> str | None:
     return None
 
 
+def _normalized_nws_alert_id(alert_id: str) -> str:
+    base_id, separator, suffix = str(alert_id).rpartition(".")
+    if separator and suffix.isdigit():
+        return base_id
+    return str(alert_id)
+
+
 def check_nws_alerts():
     global _last_nws_alert_check_epoch
 
@@ -916,9 +923,14 @@ def check_nws_alerts():
         properties = alert.get("properties", {})
         alert_id = alert.get("id", "unknown")
         alert_sent = properties.get("sent") or properties.get("effective") or ""
-        history_key = f"{alert_id}|{alert_sent}"
+        normalized_alert_id = _normalized_nws_alert_id(alert_id)
+        history_key = f"{normalized_alert_id}|{alert_sent}"
+        legacy_history_key = f"{alert_id}|{alert_sent}"
 
         if history_key in history:
+            continue
+        if legacy_history_key in history:
+            history[history_key] = history[legacy_history_key]
             continue
 
         alert_message = format_nws_alert_post(alert)
