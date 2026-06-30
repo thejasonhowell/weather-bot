@@ -123,21 +123,21 @@ SPC_OUTLOOK_PRODUCTS = [
         "label": "Day 1",
         "geojson_url": "https://www.spc.noaa.gov/products/outlook/day1otlk_cat.nolyr.geojson",
         "source_url": "https://www.spc.noaa.gov/products/outlook/day1otlk.html",
-        "image_url": "https://www.spc.noaa.gov/products/outlook/day1otlk.png",
+        "image_url": "https://www.spc.noaa.gov/partners/outlooks/state/images/IL_swody1.png",
     },
     {
         "key": "day2",
         "label": "Day 2",
         "geojson_url": "https://www.spc.noaa.gov/products/outlook/day2otlk_cat.nolyr.geojson",
         "source_url": "https://www.spc.noaa.gov/products/outlook/day2otlk.html",
-        "image_url": "https://www.spc.noaa.gov/products/outlook/day2otlk.png",
+        "image_url": "https://www.spc.noaa.gov/partners/outlooks/state/images/IL_swody2.png",
     },
     {
         "key": "day3",
         "label": "Day 3",
         "geojson_url": "https://www.spc.noaa.gov/products/outlook/day3otlk_cat.nolyr.geojson",
         "source_url": "https://www.spc.noaa.gov/products/outlook/day3otlk.html",
-        "image_url": "https://www.spc.noaa.gov/products/outlook/day3otlk.png",
+        "image_url": "https://www.spc.noaa.gov/partners/outlooks/state/images/IL_swody3.png",
     },
 ]
 OFFICIAL_IMAGE_CACHE_DIR = "/tmp/peoriaweatherbot-images"
@@ -1121,6 +1121,32 @@ def post_to_bluesky_with_official_image(message: str, image_url: str | None, alt
         return post_to_bluesky(message)
 
 
+def send_telegram_photo(message: str, image_url: str | None) -> bool:
+    image_path = _download_official_image(image_url, f"telegram_{int(time.time())}")
+    if not image_path:
+        logging.info("Telegram: official image unavailable, falling back to text-only message.")
+        send_telegram_message(message)
+        return False
+
+    try:
+        bot = Bot(token=TELEGRAM_TOKEN)
+        caption = message
+        if len(caption) > 1024:
+            caption = caption[:1021].rstrip() + "..."
+
+        async def _send_photo():
+            with open(image_path, "rb") as photo:
+                await bot.send_photo(chat_id=TELEGRAM_CHAT_ID, photo=photo, caption=caption)
+
+        asyncio.run(_send_photo())
+        logging.info("Telegram: Photo sent with official image.")
+        return True
+    except Exception as e:
+        logging.error(f"Telegram: Sending photo failed. Falling back to text-only. Error: {e}")
+        send_telegram_message(message)
+        return False
+
+
 def _spc_risk_rank(label: str | None) -> int:
     return SPC_RISK_RANKS.get(str(label or "").upper(), 0)
 
@@ -1313,7 +1339,7 @@ def check_spc_outlooks():
             outlook.get("image_url"),
             f"Official SPC {outlook.get('product_label', 'outlook')} categorical outlook map.",
         )
-        send_telegram_message(spc_message)
+        send_telegram_photo(spc_message, outlook.get("image_url"))
         history[product["key"]] = {
             "signature": signature,
             "updated": now_epoch,
@@ -2018,7 +2044,7 @@ def check_forecast_products():
             item.get("image_url"),
             f"Official SPC mesoscale discussion graphic for {item.get('title', 'a mesoscale discussion')}.",
         )
-        send_telegram_message(md_message)
+        send_telegram_photo(md_message, item.get("image_url"))
         history[md_key] = now_epoch
 
     recent_lsr_products = _fetch_recent_nws_products(NWS_LSR_URL, "NWS LSR", limit=10)
