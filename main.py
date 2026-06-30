@@ -37,6 +37,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 LOG_FILE = os.getenv("WEATHERBOT_LOG_FILE", "/tmp/weather.log")
+CONTROL_COMMAND_FILE = os.getenv("WEATHERBOT_CONTROL_COMMAND_FILE", "control_command.json")
 _log_handlers = [logging.StreamHandler()]
 try:
     _log_handlers.insert(0, logging.FileHandler(LOG_FILE))
@@ -1017,11 +1018,11 @@ def _normalized_nws_alert_id(alert_id: str) -> str:
     return str(alert_id)
 
 
-def check_nws_alerts():
+def check_nws_alerts(force: bool = False):
     global _last_nws_alert_check_epoch
 
     now_epoch = time.time()
-    if now_epoch - _last_nws_alert_check_epoch < 5 * 60:
+    if not force and now_epoch - _last_nws_alert_check_epoch < 5 * 60:
         return
     _last_nws_alert_check_epoch = now_epoch
 
@@ -1277,11 +1278,11 @@ def format_spc_outlook_post(outlook: dict) -> str:
     return "\n".join(lines)
 
 
-def check_spc_outlooks():
+def check_spc_outlooks(force: bool = False):
     global _last_spc_check_epoch
 
     now_epoch = time.time()
-    if now_epoch - _last_spc_check_epoch < SPC_CHECK_INTERVAL:
+    if not force and now_epoch - _last_spc_check_epoch < SPC_CHECK_INTERVAL:
         return
     _last_spc_check_epoch = now_epoch
 
@@ -1485,11 +1486,11 @@ def format_earthquake_post(event: dict) -> str:
     return "\n".join(lines)
 
 
-def check_usgs_earthquakes():
+def check_usgs_earthquakes(force: bool = False):
     global _last_earthquake_check_epoch
 
     now_epoch = time.time()
-    if now_epoch - _last_earthquake_check_epoch < EARTHQUAKE_CHECK_INTERVAL:
+    if not force and now_epoch - _last_earthquake_check_epoch < EARTHQUAKE_CHECK_INTERVAL:
         return
     _last_earthquake_check_epoch = now_epoch
 
@@ -1979,11 +1980,11 @@ def format_spc_md_post(item: dict) -> str:
     return "\n".join(lines)
 
 
-def check_forecast_products():
+def check_forecast_products(force: bool = False):
     global _last_forecast_product_check_epoch
 
     now_epoch = time.time()
-    if now_epoch - _last_forecast_product_check_epoch < FORECAST_PRODUCT_CHECK_INTERVAL:
+    if not force and now_epoch - _last_forecast_product_check_epoch < FORECAST_PRODUCT_CHECK_INTERVAL:
         return
     _last_forecast_product_check_epoch = now_epoch
 
@@ -2293,11 +2294,11 @@ def format_river_status_post(gauge: dict) -> str:
     return "\n".join(lines)
 
 
-def check_river_flood_status():
+def check_river_flood_status(force: bool = False):
     global _last_river_check_epoch
 
     now_epoch = time.time()
-    if now_epoch - _last_river_check_epoch < RIVER_CHECK_INTERVAL:
+    if not force and now_epoch - _last_river_check_epoch < RIVER_CHECK_INTERVAL:
         return
     _last_river_check_epoch = now_epoch
 
@@ -3193,8 +3194,67 @@ def force_update(signum, frame):
         logging.warning("Force update skipped: no weather snapshot available.")
 
 
-# Register the signal handler for SIGUSR1
+def _load_control_command() -> str | None:
+    try:
+        with open(CONTROL_COMMAND_FILE, "r") as file:
+            payload = json.load(file)
+    except FileNotFoundError:
+        logging.warning("Control command signal received, but %s was not found.", CONTROL_COMMAND_FILE)
+        return None
+    except (OSError, json.JSONDecodeError) as e:
+        logging.error(f"Control command could not be loaded: {e}")
+        return None
+
+    command = str(payload.get("command", "")).strip().lower()
+    if not command:
+        logging.warning("Control command file did not include a command.")
+        return None
+    return command
+
+
+def _run_control_command(command: str):
+    if command in {"weather", "routine", "force"}:
+        force_update(None, None)
+    elif command in {"alerts", "nws"}:
+        check_nws_alerts(force=True)
+    elif command == "spc":
+        check_spc_outlooks(force=True)
+    elif command in {"earthquake", "earthquakes", "usgs"}:
+        check_usgs_earthquakes(force=True)
+    elif command in {"products", "forecast_products", "afd_hwo_lsr"}:
+        check_forecast_products(force=True)
+    elif command in {"river", "flood"}:
+        check_river_flood_status(force=True)
+    elif command in {"summary", "daily_summary"}:
+        send_daily_summary()
+    elif command == "heartbeat":
+        send_heartbeat()
+    elif command in {"all", "all_checks"}:
+        check_nws_alerts(force=True)
+        check_spc_outlooks(force=True)
+        check_usgs_earthquakes(force=True)
+        check_forecast_products(force=True)
+        check_river_flood_status(force=True)
+        send_heartbeat()
+    else:
+        logging.warning("Unknown control command requested: %s", command)
+        return
+
+    logging.info("Control command completed: %s", command)
+
+
+def run_control_command(signum, frame):
+    command = _load_control_command()
+    if not command:
+        return
+
+    logging.info("Control command signal received: %s", command)
+    _run_control_command(command)
+
+
+# Register the signal handlers for manual control.
 signal.signal(signal.SIGUSR1, force_update)
+signal.signal(signal.SIGUSR2, run_control_command)
 _load_post_state()
 
 

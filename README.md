@@ -70,6 +70,8 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
   - Pings BetterStack every **30 minutes**.
 - **Manual Overrides**
   - Supports **SIGUSR1** to force an immediate weather update without waiting for the next scheduler run.
+  - Supports **SIGUSR2** plus `control_command.json` for source-specific manual checks.
+  - Includes `weatherbot_control.py`, a tiny Tkinter control panel for one-click updates from the Mac.
 
 ---
 
@@ -267,6 +269,7 @@ Source: https://earthquake.usgs.gov/earthquakes/eventpage/example
    - **23:59**: send daily summary
 3. **Manual Update**
    - `SIGUSR1` triggers `force_update()` for an immediate post
+   - `SIGUSR2` reads `control_command.json` and runs a targeted command such as `alerts`, `spc`, `products`, `river`, `earthquakes`, `summary`, `heartbeat`, or `all`
 4. **Event Tracking**
    - Maintains rolling in-memory state for rain events, lightning events, pressure trends, rapid temp-drop alerts, storm follow-up thresholds, and daily summary values
    - Stores seen NWS alerts in `alert_history.json` so the same alert is not reposted repeatedly
@@ -309,6 +312,25 @@ To manually trigger a weather update while the bot is running, send a **SIGUSR1*
 ```bash
 ps aux | grep main.py
 kill -USR1 <PID>
+```
+
+### Button Control Panel
+Run the local Mac control panel for one-click manual checks against the IdeaPad deployment:
+
+```bash
+python3 weatherbot_control.py
+```
+
+The panel can force a routine weather post, run NWS alert checks, SPC outlook checks, AFD/HWO/LSR/SPC mesoscale discussion checks, river/flood checks, earthquake checks, daily summary, heartbeat, or all non-routine checks. Source-specific buttons bypass the timer cooldown but still respect each feature's duplicate-post history, so they check immediately without reposting unchanged alerts/outlooks.
+
+Optional environment overrides:
+
+```bash
+WEATHERBOT_CONTROL_HOST=thejasonhowell@jowell-ideapad
+WEATHERBOT_CONTROL_REMOTE_DIR=/home/thejasonhowell/Documents/Coding/PeoriaWeatherBot
+WEATHERBOT_CONTROL_REMOTE_MAIN=/home/thejasonhowell/Documents/Coding/PeoriaWeatherBot/main.py
+WEATHERBOT_CONTROL_REMOTE_PYTHON=/home/thejasonhowell/Documents/Coding/PeoriaWeatherBot/.venv-linux/bin/python
+WEATHERBOT_CONTROL_REMOTE_LOG=/tmp/weather.log
 ```
 
 ---
