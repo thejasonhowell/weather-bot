@@ -172,7 +172,18 @@ FORECAST_PRODUCT_CHECK_INTERVAL = 30 * 60
 NWS_PRODUCT_OFFICE = "ILX"
 NWS_AFD_URL = f"https://api.weather.gov/products/types/AFD/locations/{NWS_PRODUCT_OFFICE}"
 NWS_HWO_URL = f"https://api.weather.gov/products/types/HWO/locations/{NWS_PRODUCT_OFFICE}"
+NWS_LSR_URL = f"https://api.weather.gov/products/types/LSR/locations/{NWS_PRODUCT_OFFICE}"
 SPC_RSS_URL = "https://www.spc.noaa.gov/products/spcrss.xml"
+LSR_LOOKBACK_HOURS = 24
+LSR_LOCAL_COUNTIES = {
+    "Peoria", "Tazewell", "Woodford", "Fulton", "Marshall",
+    "Stark", "Knox", "Mason", "McLean",
+}
+LSR_POST_EVENT_TERMS = (
+    "tornado", "funnel", "tstm wnd dmg", "thunderstorm wind damage",
+    "hail", "flood", "flash flood", "heavy rain", "wind gust",
+    "non-tstm wnd gst", "wall cloud",
+)
 FORECAST_PRODUCT_NOTABLE_TERMS = (
     "heat", "humid", "thunder", "storm", "severe", "tornado", "hail",
     "wind", "flood", "rain", "snow", "ice", "winter", "fog", "advisory",
@@ -1499,6 +1510,54 @@ def _fetch_latest_nws_product(product_url: str, product_name: str) -> dict | Non
     return None
 
 
+def _fetch_recent_nws_products(product_url: str, product_name: str, limit: int = 8) -> list[dict]:
+    try:
+        response = requests.get(
+            product_url,
+            headers={"User-Agent": "PeoriaWeatherBot/1.0"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        products = response.json().get("@graph", [])[:limit]
+    except requests.RequestException as e:
+        logging.error(f"Error fetching {product_name} list: {e}")
+        return []
+    except ValueError as e:
+        logging.error(f"Error parsing {product_name} list: {e}")
+        return []
+
+    detailed_products = []
+    for product in products:
+        detail_url = product.get("@id")
+        if not detail_url:
+            detailed_products.append(product)
+            continue
+        try:
+            detail_response = requests.get(
+                detail_url,
+                headers={"User-Agent": "PeoriaWeatherBot/1.0"},
+                timeout=15,
+            )
+            detail_response.raise_for_status()
+            detailed_products.append(detail_response.json())
+        except requests.RequestException as e:
+            logging.error(f"Error fetching {product_name} detail: {e}")
+        except ValueError as e:
+            logging.error(f"Error parsing {product_name} detail: {e}")
+    return detailed_products
+
+
+def _product_is_recent(product: dict, lookback_hours: int) -> bool:
+    issue_time = product.get("issuanceTime")
+    if not issue_time:
+        return False
+    try:
+        issued = datetime.fromisoformat(issue_time.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return datetime.now(issued.tzinfo) - issued <= timedelta(hours=lookback_hours)
+
+
 def _extract_afd_key_messages(product_text: str) -> list[str]:
     match = re.search(
         r"\.KEY MESSAGES\.\.\.(.*?)(?:\n&&|\n\.[A-Z][A-Z0-9 /]+\.\.\.)",
@@ -1608,6 +1667,130 @@ def format_hwo_post(product: dict, segment: str) -> str | None:
     lines.extend([
         f"Issued at {issued}",
         f"Source: {_product_source_url(product)}",
+        "#peoriaweather",
+    ])
+    return "\n".join(lines)
+
+
+def _lsr_event_emoji(event_name: str) -> str:
+    text = (event_name or "").lower()
+    if "tornado" in text:
+        return "🟥🌪️"
+    if "funnel" in text or "wall cloud" in text:
+        return "🟨🌪️"
+    if "hail" in text:
+        return "🟩🧊"
+    if "flood" in text or "rain" in text:
+        return "🟩🌊"
+    if "wind" in text or "wnd" in text:
+        return "🟧💨"
+    return "📍"
+
+
+def _normalize_lsr_event(event_name: str) -> str:
+    event = _collapse_whitespace(event_name) or "storm report"
+    replacements = {
+        "Tstm Wnd Dmg": "thunderstorm wind damage",
+        "Tstm Wnd Gst": "thunderstorm wind gust",
+        "Non-Tstm Wnd Gst": "non-thunderstorm wind gust",
+    }
+    return replacements.get(event, event.lower())
+
+
+def _lsr_event_is_postworthy(event_name: str) -> bool:
+    lower_event = (event_name or "").lower()
+    return any(term in lower_event for term in LSR_POST_EVENT_TERMS)
+
+
+def parse_lsr_reports(product: dict) -> list[dict]:
+    product_text = product.get("productText", "")
+    lines = product_text.splitlines()
+    reports = []
+    current = None
+
+    first_line_pattern = re.compile(
+        r"^(\d{3,4}\s+[AP]M)\s+(.+?)\s{2,}(.+?)\s{2,}([0-9.]+[NS]\s+[0-9.]+[EW])\s*$"
+    )
+
+    def finish_current():
+        if not current:
+            return
+        current["remarks"] = _collapse_whitespace(" ".join(current.get("remarks_lines", []))) or ""
+        current.pop("remarks_lines", None)
+        reports.append(current)
+
+    for raw_line in lines:
+        line = raw_line.rstrip()
+        first_match = first_line_pattern.match(line)
+        if first_match:
+            finish_current()
+            current = {
+                "time": first_match.group(1).strip(),
+                "event": _collapse_whitespace(first_match.group(2)) or "",
+                "location": _collapse_whitespace(first_match.group(3)) or "",
+                "latlon": first_match.group(4).strip(),
+                "remarks_lines": [],
+                "product_id": product.get("id"),
+                "source_url": _product_source_url(product),
+            }
+            continue
+
+        if not current:
+            continue
+
+        if re.match(r"^\d{2}/\d{2}/\d{4}", line):
+            current["date"] = line[0:10].strip()
+            current["magnitude"] = _collapse_whitespace(line[12:24]) or ""
+            current["county"] = _collapse_whitespace(line[29:47]) or ""
+            current["state"] = line[48:50].strip()
+            current["source"] = _collapse_whitespace(line[53:]) or ""
+            continue
+
+        stripped = line.strip()
+        if stripped and not stripped.startswith("..") and not stripped.startswith("$$"):
+            current["remarks_lines"].append(stripped)
+
+    finish_current()
+    return reports
+
+
+def _lsr_report_is_local(report: dict) -> bool:
+    return report.get("county") in LSR_LOCAL_COUNTIES
+
+
+def _lsr_report_key(report: dict) -> str:
+    return "|".join([
+        str(report.get("product_id") or ""),
+        str(report.get("date") or ""),
+        str(report.get("time") or ""),
+        str(report.get("event") or ""),
+        str(report.get("location") or ""),
+        str(report.get("county") or ""),
+    ])
+
+
+def format_lsr_post(report: dict) -> str:
+    emoji = _lsr_event_emoji(report.get("event", ""))
+    event_text = _normalize_lsr_event(report.get("event", ""))
+    location = report.get("location") or "the Peoria area"
+    county = report.get("county") or "central Illinois"
+    magnitude = report.get("magnitude")
+    source = report.get("source")
+    remarks = report.get("remarks")
+
+    lines = [
+        f"{emoji} Local Storm Report from NWS Lincoln.",
+        "",
+        f"{report.get('time', 'Time unknown')}: {event_text} near {location}, {county} County.",
+    ]
+    if magnitude:
+        lines.append(f"Magnitude: {magnitude}")
+    if source:
+        lines.append(f"Reported by: {source}")
+    if remarks:
+        lines.append(f"Report: {_shorten_sentence(remarks, 150)}")
+    lines.extend([
+        f"Source: {report.get('source_url')}",
         "#peoriaweather",
     ])
     return "\n".join(lines)
@@ -1765,6 +1948,47 @@ def check_forecast_products():
         post_to_bluesky(md_message)
         send_telegram_message(md_message)
         history[md_key] = now_epoch
+
+    recent_lsr_products = _fetch_recent_nws_products(NWS_LSR_URL, "NWS LSR", limit=10)
+    lsr_reports_checked = 0
+    lsr_reports_posted = 0
+    for product in recent_lsr_products:
+        if not _product_is_recent(product, LSR_LOOKBACK_HOURS):
+            continue
+        for report in parse_lsr_reports(product):
+            lsr_reports_checked += 1
+            lsr_key = f"LSR|{_lsr_report_key(report)}"
+            if lsr_key in history:
+                continue
+            if not _lsr_report_is_local(report):
+                logging.info(
+                    "NWS LSR skipped outside local counties: %s in %s County.",
+                    report.get("event", "unknown"),
+                    report.get("county", "unknown"),
+                )
+                history[lsr_key] = now_epoch
+                continue
+            if not _lsr_event_is_postworthy(report.get("event", "")):
+                logging.info("NWS LSR skipped low-priority event: %s.", report.get("event", "unknown"))
+                history[lsr_key] = now_epoch
+                continue
+
+            logging.info(
+                "NWS LSR: posting %s near %s, %s County.",
+                report.get("event", "unknown"),
+                report.get("location", "unknown"),
+                report.get("county", "unknown"),
+            )
+            lsr_message = format_lsr_post(report)
+            post_to_bluesky(lsr_message)
+            send_telegram_message(lsr_message)
+            history[lsr_key] = now_epoch
+            lsr_reports_posted += 1
+
+    if recent_lsr_products and not lsr_reports_checked:
+        logging.info("NWS LSR: no recent reports inside the %s-hour window.", LSR_LOOKBACK_HOURS)
+    elif lsr_reports_checked and not lsr_reports_posted:
+        logging.info("NWS LSR: checked %s recent reports with no new local posts.", lsr_reports_checked)
 
     _save_forecast_product_history(history)
 

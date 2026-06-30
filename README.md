@@ -51,6 +51,7 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
 - **Forecast Office Products**
   - Checks ILX Area Forecast Discussions and Hazardous Weather Outlooks through the official NWS product API.
   - Posts concise AFD key-message summaries and Peoria-relevant HWO hazard summaries when notable weather is mentioned.
+  - Parses recent ILX Local Storm Reports and posts new Peoria-area reports for tornado/funnel clouds, hail, wind damage, flooding, heavy rain, and other high-impact events.
   - Watches the SPC RSS feed for mesoscale discussions and posts only when they appear locally relevant to ILX / central Illinois / Peoria.
   - Dedupes these product posts locally with `forecast_product_history.json`.
 - **USGS Earthquake Awareness**
@@ -219,6 +220,17 @@ Source: https://forecast.weather.gov/product.php?site=ILX&issuedby=ILX&product=A
 #peoriaweather
 ```
 
+### 📍 Local Storm Report Example
+```
+🟧💨 Local Storm Report from NWS Lincoln.
+
+6:42 PM: thunderstorm wind damage near Peoria, Peoria County.
+Reported by: Emergency Manager
+Report: Tree limbs down near Glen Oak Park.
+Source: https://forecast.weather.gov/product.php?site=ILX&issuedby=ILX&product=LSR
+#peoriaweather
+```
+
 ### 🟫 USGS Earthquake Example
 ```
 🟫 USGS earthquake report for the Peoria region.
@@ -244,7 +256,7 @@ Source: https://earthquake.usgs.gov/earthquakes/eventpage/example
    - Every **5 minutes**: check for new NWS alerts for `ILC143`
    - Every **30 minutes**: check SPC Day 1/2/3 outlook polygons for Peoria risk changes
    - Every **30 minutes**: check USGS earthquake data for locally meaningful regional events
-   - Every **30 minutes**: check ILX AFD/HWO products and local-relevant SPC mesoscale discussions
+   - Every **30 minutes**: check ILX AFD/HWO/LSR products and local-relevant SPC mesoscale discussions
    - About once per hour as needed: refresh a short NWS forecast peek for routine posts
    - Once per day: send pre-sunrise and pre-sunset notices when each is within the configured lead time
    - Between routine cycles: watch for fast-changing storm conditions and send follow-up storm posts when warranted
@@ -257,7 +269,7 @@ Source: https://earthquake.usgs.gov/earthquakes/eventpage/example
    - Maintains rolling in-memory state for rain events, lightning events, pressure trends, rapid temp-drop alerts, storm follow-up thresholds, and daily summary values
    - Stores seen NWS alerts in `alert_history.json` so the same alert is not reposted repeatedly
    - Stores last posted SPC outlook signatures in `spc_history.json`
-   - Stores seen AFD/HWO/SPC MD products in `forecast_product_history.json`
+   - Stores seen AFD/HWO/LSR/SPC MD products in `forecast_product_history.json`
    - Stores seen USGS earthquake IDs in `earthquake_history.json`
    - Stores last river flood state in `river_history.json` for category/crest change detection
 
