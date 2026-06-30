@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Last Modified: 2026-06-29
+# Last Modified: 2026-06-30
 # To force an update of the weather bot while it's running,
 # send a SIGUSR1 signal to its process.
 # For instance, if the process ID is 1234, run:
@@ -19,11 +19,14 @@ from bsky_bridge import BskySession, post_text
 import logging
 import os
 import json
+import re
 import sys
 import time
 import math
+import html
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+import xml.etree.ElementTree as ET
 from astral import LocationInfo
 from astral.sun import sun
 from telegram import Bot  # Import for Telegram Bot API
@@ -162,6 +165,24 @@ EARTHQUAKE_LOCAL_MIN_MAGNITUDE = 2.5
 EARTHQUAKE_REGIONAL_MIN_MAGNITUDE = 4.0
 USGS_EARTHQUAKE_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 _last_earthquake_check_epoch = 0
+
+# NWS/SPC forecast office products
+FORECAST_PRODUCT_HISTORY_FILE = "forecast_product_history.json"
+FORECAST_PRODUCT_CHECK_INTERVAL = 30 * 60
+NWS_PRODUCT_OFFICE = "ILX"
+NWS_AFD_URL = f"https://api.weather.gov/products/types/AFD/locations/{NWS_PRODUCT_OFFICE}"
+NWS_HWO_URL = f"https://api.weather.gov/products/types/HWO/locations/{NWS_PRODUCT_OFFICE}"
+SPC_RSS_URL = "https://www.spc.noaa.gov/products/spcrss.xml"
+FORECAST_PRODUCT_NOTABLE_TERMS = (
+    "heat", "humid", "thunder", "storm", "severe", "tornado", "hail",
+    "wind", "flood", "rain", "snow", "ice", "winter", "fog", "advisory",
+    "warning", "watch", "spotter",
+)
+SPC_MD_LOCAL_TERMS = (
+    "ILX", "central Illinois", "west central Illinois", "Peoria",
+    "Illinois River", "I-74", "Lincoln IL",
+)
+_last_forecast_product_check_epoch = 0
 
 # Posting behavior tuning
 QUIET_HOURS_START = 23
@@ -1407,6 +1428,347 @@ def check_usgs_earthquakes():
     _save_earthquake_history(history)
 
 
+def _load_forecast_product_history() -> dict:
+    if os.path.exists(FORECAST_PRODUCT_HISTORY_FILE):
+        try:
+            with open(FORECAST_PRODUCT_HISTORY_FILE, "r") as file:
+                return json.load(file)
+        except Exception as e:
+            logging.error(f"Error loading forecast product history: {e}")
+    return {}
+
+
+def _save_forecast_product_history(history: dict):
+    try:
+        with open(FORECAST_PRODUCT_HISTORY_FILE, "w") as file:
+            json.dump(history, file)
+    except Exception as e:
+        logging.error(f"Error saving forecast product history: {e}")
+
+
+def _cleanup_forecast_product_history(history: dict) -> dict:
+    now_epoch = time.time()
+    return {key: value for key, value in history.items() if now_epoch - value < 7 * 86400}
+
+
+def _product_source_url(product: dict) -> str:
+    product_code = product.get("productCode")
+    office = str(product.get("issuingOffice") or "").removeprefix("K")
+    if product_code and office:
+        return (
+            "https://forecast.weather.gov/product.php"
+            f"?site={office}&issuedby={office}&product={product_code}&format=CI&version=1&glossary=1"
+        )
+    return product.get("@id") or f"https://api.weather.gov/products/{product.get('id', '')}"
+
+
+def _has_notable_product_terms(text: str) -> bool:
+    lower_text = (text or "").lower()
+    return any(term.lower() in lower_text for term in FORECAST_PRODUCT_NOTABLE_TERMS)
+
+
+def _fetch_latest_nws_product(product_url: str, product_name: str) -> dict | None:
+    try:
+        response = requests.get(
+            product_url,
+            headers={"User-Agent": "PeoriaWeatherBot/1.0"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        products = response.json().get("@graph", [])
+        if not products:
+            logging.info("%s check: no products returned.", product_name)
+            return None
+
+        latest = products[0]
+        detail_url = latest.get("@id")
+        if not detail_url:
+            return latest
+
+        detail_response = requests.get(
+            detail_url,
+            headers={"User-Agent": "PeoriaWeatherBot/1.0"},
+            timeout=15,
+        )
+        detail_response.raise_for_status()
+        return detail_response.json()
+    except requests.RequestException as e:
+        logging.error(f"Error fetching {product_name}: {e}")
+    except ValueError as e:
+        logging.error(f"Error parsing {product_name}: {e}")
+    return None
+
+
+def _extract_afd_key_messages(product_text: str) -> list[str]:
+    match = re.search(
+        r"\.KEY MESSAGES\.\.\.(.*?)(?:\n&&|\n\.[A-Z][A-Z0-9 /]+\.\.\.)",
+        product_text or "",
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return []
+
+    messages = []
+    current = []
+    for raw_line in match.group(1).splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("-"):
+            if current:
+                messages.append(_collapse_whitespace(" ".join(current)))
+            current = [line.lstrip("- ").strip()]
+        elif current:
+            current.append(line)
+    if current:
+        messages.append(_collapse_whitespace(" ".join(current)))
+    return [message for message in messages if message][:4]
+
+
+def format_afd_post(product: dict, key_messages: list[str]) -> str:
+    issued = _format_alert_time(product.get("issuanceTime"))
+    lines = [
+        "📝 NWS Lincoln AFD highlights for Peoria/central IL.",
+        "",
+    ]
+    lines.extend(f"- {message}" for message in key_messages[:3])
+    lines.extend([
+        f"Issued at {issued}",
+        f"Source: {_product_source_url(product)}",
+        "#peoriaweather",
+    ])
+    return "\n".join(lines)
+
+
+def _peoria_hwo_segment(product_text: str) -> str | None:
+    for segment in re.split(r"\n\$\$\s*\n", product_text or ""):
+        if re.search(r"\bPeoria\b", segment, re.IGNORECASE):
+            return segment
+    return None
+
+
+def _extract_hwo_section(segment: str, heading: str) -> str | None:
+    pattern = rf"\.{re.escape(heading)}\.\.\.(.*?)(?=\n\.[A-Z ]+\.\.\.|\n&&|\n\$\$|\Z)"
+    match = re.search(pattern, segment or "", re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None
+
+    lines = []
+    for raw_line in match.group(1).splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.lower().rstrip(".") in {
+            "today and tonight",
+            "tonight",
+            "wednesday through monday",
+            "thursday through tuesday",
+            "friday through wednesday",
+            "saturday through thursday",
+            "sunday through friday",
+            "monday through saturday",
+            "tuesday through sunday",
+        }:
+            continue
+        if "spotter activation" in line.lower() and "not anticipated" in line.lower():
+            return "not anticipated through tonight"
+        if re.match(r"^(ILZ|[A-Z]{2,}Z|\d{3})", line):
+            continue
+        lines.append(line)
+    text = _collapse_whitespace(" ".join(lines))
+    return text or None
+
+
+def _shorten_sentence(text: str, limit: int = 135) -> str:
+    text = _collapse_whitespace(text) or ""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip(" ,.;") + "..."
+
+
+def format_hwo_post(product: dict, segment: str) -> str | None:
+    day_one = _extract_hwo_section(segment, "DAY ONE")
+    days_two = _extract_hwo_section(segment, "DAYS TWO THROUGH SEVEN")
+    spotter = _extract_hwo_section(segment, "SPOTTER INFORMATION STATEMENT")
+
+    if not any((day_one, days_two, spotter)):
+        return None
+
+    issued = _format_alert_time(product.get("issuanceTime"))
+    lines = [
+        "⚠️ NWS Hazardous Weather Outlook for Peoria and central IL.",
+        "",
+    ]
+    if day_one:
+        lines.append(f"Today: {_shorten_sentence(day_one)}")
+    if days_two:
+        lines.append(f"Next several days: {_shorten_sentence(days_two)}")
+    if spotter:
+        lines.append(f"Spotter activation: {_shorten_sentence(spotter, 90)}")
+    lines.extend([
+        f"Issued at {issued}",
+        f"Source: {_product_source_url(product)}",
+        "#peoriaweather",
+    ])
+    return "\n".join(lines)
+
+
+def _strip_html(raw_text: str) -> str:
+    without_cdata = re.sub(r"<!\[CDATA\[|\]\]>", "", raw_text or "")
+    without_tags = re.sub(r"<[^>]+>", " ", without_cdata)
+    return _collapse_whitespace(html.unescape(without_tags)) or ""
+
+
+def _extract_pre_text(raw_text: str) -> str:
+    match = re.search(r"<pre>(.*?)</pre>", raw_text or "", re.IGNORECASE | re.DOTALL)
+    if match:
+        return html.unescape(match.group(1)).strip()
+    return _strip_html(raw_text)
+
+
+def fetch_spc_md_items() -> list[dict]:
+    try:
+        response = requests.get(
+            SPC_RSS_URL,
+            headers={"User-Agent": "PeoriaWeatherBot/1.0"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+    except requests.RequestException as e:
+        logging.error(f"Error fetching SPC RSS: {e}")
+        return []
+    except ET.ParseError as e:
+        logging.error(f"Error parsing SPC RSS: {e}")
+        return []
+
+    items = []
+    for item in root.findall("./channel/item"):
+        title = item.findtext("title") or ""
+        link = item.findtext("link") or ""
+        description = item.findtext("description") or ""
+        guid = item.findtext("guid") or link or title
+        pub_date = item.findtext("pubDate") or ""
+        if not re.search(r"\bSPC MD \d+\b|Mesoscale Discussion", title, re.IGNORECASE):
+            continue
+        if "No MDs are in effect" in title:
+            continue
+        text = _extract_pre_text(description)
+        items.append({
+            "title": _collapse_whitespace(title),
+            "link": link,
+            "guid": guid,
+            "pub_date": pub_date,
+            "text": text,
+        })
+    return items
+
+
+def _spc_md_is_local(item: dict) -> bool:
+    searchable = f"{item.get('title', '')}\n{item.get('text', '')}"
+    return any(term.lower() in searchable.lower() for term in SPC_MD_LOCAL_TERMS)
+
+
+def _extract_spc_line(text: str, label: str) -> str | None:
+    pattern = rf"{re.escape(label)}\.\.\.(.*?)(?=\n[A-Z][A-Za-z /]+\.\.\.|\n\n|\Z)"
+    match = re.search(pattern, text or "", re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None
+    return _shorten_sentence(match.group(1), 145)
+
+
+def format_spc_md_post(item: dict) -> str:
+    text = item.get("text", "")
+    concerning = _extract_spc_line(text, "Concerning")
+    watch_probability = _extract_spc_line(text, "Probability of Watch Issuance")
+    summary = _extract_spc_line(text, "SUMMARY")
+
+    lines = [
+        "🌪️ SPC mesoscale discussion may include central Illinois.",
+        "",
+    ]
+    if concerning:
+        lines.append(f"Concern: {concerning}")
+    if watch_probability:
+        lines.append(f"Watch probability: {watch_probability}")
+    if summary:
+        lines.append(f"Main idea: {summary}")
+    if len(lines) == 2:
+        lines.append(_shorten_sentence(item.get("title", "SPC mesoscale discussion"), 150))
+    lines.extend([
+        f"Source: {item.get('link')}",
+        "#peoriaweather",
+    ])
+    return "\n".join(lines)
+
+
+def check_forecast_products():
+    global _last_forecast_product_check_epoch
+
+    now_epoch = time.time()
+    if now_epoch - _last_forecast_product_check_epoch < FORECAST_PRODUCT_CHECK_INTERVAL:
+        return
+    _last_forecast_product_check_epoch = now_epoch
+
+    history = _cleanup_forecast_product_history(_load_forecast_product_history())
+
+    hwo = _fetch_latest_nws_product(NWS_HWO_URL, "NWS HWO")
+    if hwo:
+        hwo_key = f"HWO|{hwo.get('id')}"
+        segment = _peoria_hwo_segment(hwo.get("productText", ""))
+        message = format_hwo_post(hwo, segment) if segment else None
+        if hwo_key in history:
+            logging.info("NWS HWO: no posting change.")
+        elif not segment:
+            logging.info("NWS HWO: no Peoria segment found.")
+            history[hwo_key] = now_epoch
+        elif not _has_notable_product_terms(segment):
+            logging.info("NWS HWO: Peoria segment had no notable hazard terms.")
+            history[hwo_key] = now_epoch
+        elif message:
+            logging.info("NWS HWO: posting Peoria outlook summary.")
+            post_to_bluesky(message)
+            send_telegram_message(message)
+            history[hwo_key] = now_epoch
+
+    afd = _fetch_latest_nws_product(NWS_AFD_URL, "NWS AFD")
+    if afd:
+        afd_key = f"AFD|{afd.get('id')}"
+        key_messages = _extract_afd_key_messages(afd.get("productText", ""))
+        message_text = " ".join(key_messages)
+        if afd_key in history:
+            logging.info("NWS AFD: no posting change.")
+        elif not key_messages:
+            logging.info("NWS AFD: no key messages found.")
+            history[afd_key] = now_epoch
+        elif not _has_notable_product_terms(message_text):
+            logging.info("NWS AFD: key messages had no notable weather terms.")
+            history[afd_key] = now_epoch
+        else:
+            logging.info("NWS AFD: posting key messages summary.")
+            afd_message = format_afd_post(afd, key_messages)
+            post_to_bluesky(afd_message)
+            send_telegram_message(afd_message)
+            history[afd_key] = now_epoch
+
+    for item in fetch_spc_md_items():
+        md_key = f"SPCMD|{item.get('guid')}"
+        if md_key in history:
+            continue
+        if not _spc_md_is_local(item):
+            logging.info("SPC MD skipped as non-local: %s", item.get("title"))
+            history[md_key] = now_epoch
+            continue
+
+        logging.info("SPC MD: posting local mesoscale discussion: %s", item.get("title"))
+        md_message = format_spc_md_post(item)
+        post_to_bluesky(md_message)
+        send_telegram_message(md_message)
+        history[md_key] = now_epoch
+
+    _save_forecast_product_history(history)
+
+
 def _safe_float(value):
     try:
         return float(value)
@@ -2525,6 +2887,7 @@ def scheduler():
         check_nws_alerts()
         check_spc_outlooks()
         check_usgs_earthquakes()
+        check_forecast_products()
         check_river_flood_status()
         check_sunrise_notice(now)
         check_sunset_notice(now)
