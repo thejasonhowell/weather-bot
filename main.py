@@ -15,7 +15,7 @@
 import tweepy
 import requests
 from mastodon import Mastodon
-from bsky_bridge import BskySession, post_text
+from bsky_bridge import BskySession, post_image, post_text
 import logging
 import os
 import json
@@ -123,20 +123,24 @@ SPC_OUTLOOK_PRODUCTS = [
         "label": "Day 1",
         "geojson_url": "https://www.spc.noaa.gov/products/outlook/day1otlk_cat.nolyr.geojson",
         "source_url": "https://www.spc.noaa.gov/products/outlook/day1otlk.html",
+        "image_url": "https://www.spc.noaa.gov/products/outlook/day1otlk.png",
     },
     {
         "key": "day2",
         "label": "Day 2",
         "geojson_url": "https://www.spc.noaa.gov/products/outlook/day2otlk_cat.nolyr.geojson",
         "source_url": "https://www.spc.noaa.gov/products/outlook/day2otlk.html",
+        "image_url": "https://www.spc.noaa.gov/products/outlook/day2otlk.png",
     },
     {
         "key": "day3",
         "label": "Day 3",
         "geojson_url": "https://www.spc.noaa.gov/products/outlook/day3otlk_cat.nolyr.geojson",
         "source_url": "https://www.spc.noaa.gov/products/outlook/day3otlk.html",
+        "image_url": "https://www.spc.noaa.gov/products/outlook/day3otlk.png",
     },
 ]
+OFFICIAL_IMAGE_CACHE_DIR = "/tmp/peoriaweatherbot-images"
 SPC_RISK_RANKS = {
     "TSTM": 1,
     "MRGL": 2,
@@ -1068,6 +1072,55 @@ def _save_spc_history(history: dict):
         logging.error(f"Error saving SPC history: {e}")
 
 
+def _download_official_image(image_url: str | None, image_name: str) -> str | None:
+    if not image_url:
+        return None
+
+    try:
+        os.makedirs(OFFICIAL_IMAGE_CACHE_DIR, exist_ok=True)
+        extension = os.path.splitext(image_url.split("?", 1)[0])[1] or ".png"
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", image_name).strip("_") or "official_weather_image"
+        image_path = os.path.join(OFFICIAL_IMAGE_CACHE_DIR, f"{safe_name}{extension}")
+        response = requests.get(
+            image_url,
+            headers={"User-Agent": "PeoriaWeatherBot/1.0"},
+            timeout=20,
+        )
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "")
+        if not content_type.startswith("image/"):
+            logging.warning("Official image URL did not return an image: %s (%s)", image_url, content_type)
+            return None
+        with open(image_path, "wb") as file:
+            file.write(response.content)
+        return image_path
+    except requests.RequestException as e:
+        logging.error(f"Error downloading official image {image_url}: {e}")
+    except OSError as e:
+        logging.error(f"Error saving official image {image_url}: {e}")
+    return None
+
+
+def post_to_bluesky_with_official_image(message: str, image_url: str | None, alt_text: str) -> bool:
+    if session is None:
+        logging.warning("Bluesky session not initialized. Skipping Bluesky image post.")
+        return False
+
+    post_message = _fit_bluesky_text(message)
+    image_path = _download_official_image(image_url, f"spc_{int(time.time())}")
+    if not image_path:
+        logging.info("Bluesky: official image unavailable, falling back to text-only post.")
+        return post_to_bluesky(message)
+
+    try:
+        post_image(session, post_message, image_path, alt_text=alt_text)
+        logging.info("Bluesky: Weather data posted with official image.")
+        return True
+    except Exception as e:
+        logging.error(f"Bluesky: Image posting failed. Falling back to text-only. Error: {e}")
+        return post_to_bluesky(message)
+
+
 def _spc_risk_rank(label: str | None) -> int:
     return SPC_RISK_RANKS.get(str(label or "").upper(), 0)
 
@@ -1162,6 +1215,7 @@ def _spc_outlook_for_peoria(product: dict) -> dict | None:
     strongest["product_key"] = product["key"]
     strongest["product_label"] = product["label"]
     strongest["source_url"] = product["source_url"]
+    strongest["image_url"] = product.get("image_url")
     return strongest
 
 
@@ -1254,7 +1308,11 @@ def check_spc_outlooks():
             outlook.get("label", "unknown"),
         )
         spc_message = format_spc_outlook_post(outlook)
-        post_to_bluesky(spc_message)
+        post_to_bluesky_with_official_image(
+            spc_message,
+            outlook.get("image_url"),
+            f"Official SPC {outlook.get('product_label', 'outlook')} categorical outlook map.",
+        )
         send_telegram_message(spc_message)
         history[product["key"]] = {
             "signature": signature,
@@ -1809,6 +1867,15 @@ def _extract_pre_text(raw_text: str) -> str:
     return _strip_html(raw_text)
 
 
+def _extract_official_image_url(raw_text: str) -> str | None:
+    match = re.search(
+        r"https://www\.spc\.noaa\.gov/products/[^\"' <]+?\.(?:png|gif|jpg)",
+        raw_text or "",
+        re.IGNORECASE,
+    )
+    return match.group(0) if match else None
+
+
 def fetch_spc_md_items() -> list[dict]:
     try:
         response = requests.get(
@@ -1843,6 +1910,7 @@ def fetch_spc_md_items() -> list[dict]:
             "guid": guid,
             "pub_date": pub_date,
             "text": text,
+            "image_url": _extract_official_image_url(description),
         })
     return items
 
@@ -1945,7 +2013,11 @@ def check_forecast_products():
 
         logging.info("SPC MD: posting local mesoscale discussion: %s", item.get("title"))
         md_message = format_spc_md_post(item)
-        post_to_bluesky(md_message)
+        post_to_bluesky_with_official_image(
+            md_message,
+            item.get("image_url"),
+            f"Official SPC mesoscale discussion graphic for {item.get('title', 'a mesoscale discussion')}.",
+        )
         send_telegram_message(md_message)
         history[md_key] = now_epoch
 

@@ -47,12 +47,14 @@ This automated bot fetches real-time data from a WeatherFlow station and posts h
   - Checks official SPC Day 1, Day 2, and Day 3 categorical outlook GeoJSON.
   - Uses Peoria's coordinates against SPC risk polygons instead of relying on whether the text literally says `Peoria`.
   - Posts when Peoria is inside a **Marginal Risk** or higher and that local risk signature changes.
+  - Attaches official SPC outlook graphics to Bluesky posts when available, with text-only fallback.
   - Dedupes SPC outlook posts locally with `spc_history.json`.
 - **Forecast Office Products**
   - Checks ILX Area Forecast Discussions and Hazardous Weather Outlooks through the official NWS product API.
   - Posts concise AFD key-message summaries and Peoria-relevant HWO hazard summaries when notable weather is mentioned.
   - Parses recent ILX Local Storm Reports and posts new Peoria-area reports for tornado/funnel clouds, hail, wind damage, flooding, heavy rain, and other high-impact events.
   - Watches the SPC RSS feed for mesoscale discussions and posts only when they appear locally relevant to ILX / central Illinois / Peoria.
+  - Attaches official SPC mesoscale discussion graphics to Bluesky posts when the RSS item includes one.
   - Dedupes these product posts locally with `forecast_product_history.json`.
 - **USGS Earthquake Awareness**
   - Checks the official USGS earthquake API for regional earthquakes near Peoria.
