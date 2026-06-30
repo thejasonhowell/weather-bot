@@ -37,7 +37,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 LOG_FILE = os.getenv("WEATHERBOT_LOG_FILE", "/tmp/weather.log")
-CONTROL_COMMAND_FILE = os.getenv("WEATHERBOT_CONTROL_COMMAND_FILE", "control_command.json")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONTROL_COMMAND_FILE = os.getenv(
+    "WEATHERBOT_CONTROL_COMMAND_FILE",
+    os.path.join(SCRIPT_DIR, "control_command.json"),
+)
 _log_handlers = [logging.StreamHandler()]
 try:
     _log_handlers.insert(0, logging.FileHandler(LOG_FILE))
