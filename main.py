@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Last Modified: 2026-06-30
+# Last Modified: 2026-09-04
 # To force an update of the weather bot while it's running,
 # send a SIGUSR1 signal to its process.
 # For instance, if the process ID is 1234, run:
@@ -31,6 +31,8 @@ from astral import LocationInfo
 from astral.sun import sun
 from telegram import Bot  # Import for Telegram Bot API
 import asyncio  # For asynchronous operations
+import hashlib
+from collections import deque
 import signal  # To handle signals (force update)
 # Load environment variables from a .env file
 from dotenv import load_dotenv
@@ -80,8 +82,10 @@ def send_telegram_message(message):
         # Since send_message is asynchronous, we run it via asyncio.run
         asyncio.run(bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message))
         logging.info("Telegram: Message sent.")
+        return True
     except Exception as e:
         logging.error(f"Telegram: Sending message failed. Error: {e}")
+        return False
 
 
 # Global variables to track daily maximum wind values and event info for lightning and rain
@@ -93,6 +97,8 @@ last_strike_epoch_global = None
 current_rain_event_total = 0.0
 rain_event_baseline = None
 last_rain_epoch_global = None
+_previous_rain_total = None
+_previous_rain_date = None
 
 # Daily stats for end-of-day summary
 _daily_high_temp_f = None
@@ -1052,9 +1058,8 @@ def check_nws_alerts(force: bool = False):
             continue
 
         alert_message = format_nws_alert_post(alert)
-        post_to_bluesky(alert_message)
-        send_telegram_message(alert_message)
-        history[history_key] = now_epoch
+        if _deliver_post(alert_message, key=history_key):
+            history[history_key] = now_epoch
 
     _save_alert_history(history)
 
@@ -1130,8 +1135,7 @@ def send_telegram_photo(message: str, image_url: str | None) -> bool:
     image_path = _download_official_image(image_url, f"telegram_{int(time.time())}")
     if not image_path:
         logging.info("Telegram: official image unavailable, falling back to text-only message.")
-        send_telegram_message(message)
-        return False
+        return send_telegram_message(message)
 
     try:
         bot = Bot(token=TELEGRAM_TOKEN)
@@ -1148,8 +1152,7 @@ def send_telegram_photo(message: str, image_url: str | None) -> bool:
         return True
     except Exception as e:
         logging.error(f"Telegram: Sending photo failed. Falling back to text-only. Error: {e}")
-        send_telegram_message(message)
-        return False
+        return send_telegram_message(message)
 
 
 def _spc_risk_rank(label: str | None) -> int:
@@ -1339,17 +1342,12 @@ def check_spc_outlooks(force: bool = False):
             outlook.get("label", "unknown"),
         )
         spc_message = format_spc_outlook_post(outlook)
-        post_to_bluesky_with_official_image(
-            spc_message,
-            outlook.get("image_url"),
-            f"Official SPC {outlook.get('product_label', 'outlook')} categorical outlook map.",
-        )
-        send_telegram_photo(spc_message, outlook.get("image_url"))
-        history[product["key"]] = {
-            "signature": signature,
-            "updated": now_epoch,
-            "risk": outlook.get("label"),
-        }
+        if _deliver_post(spc_message, outlook.get("image_url"),
+                         f"Official SPC {outlook.get('product_label', 'outlook')} categorical outlook map.",
+                         key="spc|" + signature):
+            history[product["key"]] = {
+                "signature": signature, "updated": now_epoch, "risk": outlook.get("label"),
+            }
 
     _save_spc_history(history)
 
@@ -1521,9 +1519,8 @@ def check_usgs_earthquakes(force: bool = False):
 
         logging.info("USGS earthquake %s: posting update (%s).", event_id, reason)
         earthquake_message = format_earthquake_post(event)
-        post_to_bluesky(earthquake_message)
-        send_telegram_message(earthquake_message)
-        history[event_id] = now_epoch
+        if _deliver_post(earthquake_message, key="earthquake|" + event_id):
+            history[event_id] = now_epoch
 
     _save_earthquake_history(history)
 
@@ -2009,9 +2006,8 @@ def check_forecast_products(force: bool = False):
             history[hwo_key] = now_epoch
         elif message:
             logging.info("NWS HWO: posting Peoria outlook summary.")
-            post_to_bluesky(message)
-            send_telegram_message(message)
-            history[hwo_key] = now_epoch
+            if _deliver_post(message, key=hwo_key):
+                history[hwo_key] = now_epoch
 
     afd = _fetch_latest_nws_product(NWS_AFD_URL, "NWS AFD")
     if afd:
@@ -2029,9 +2025,8 @@ def check_forecast_products(force: bool = False):
         else:
             logging.info("NWS AFD: posting key messages summary.")
             afd_message = format_afd_post(afd, key_messages)
-            post_to_bluesky(afd_message)
-            send_telegram_message(afd_message)
-            history[afd_key] = now_epoch
+            if _deliver_post(afd_message, key=afd_key):
+                history[afd_key] = now_epoch
 
     for item in fetch_spc_md_items():
         md_key = f"SPCMD|{item.get('guid')}"
@@ -2044,13 +2039,10 @@ def check_forecast_products(force: bool = False):
 
         logging.info("SPC MD: posting local mesoscale discussion: %s", item.get("title"))
         md_message = format_spc_md_post(item)
-        post_to_bluesky_with_official_image(
-            md_message,
-            item.get("image_url"),
-            f"Official SPC mesoscale discussion graphic for {item.get('title', 'a mesoscale discussion')}.",
-        )
-        send_telegram_photo(md_message, item.get("image_url"))
-        history[md_key] = now_epoch
+        if _deliver_post(md_message, item.get("image_url"),
+                         f"Official SPC mesoscale discussion graphic for {item.get('title', 'a mesoscale discussion')}.",
+                         key=md_key):
+            history[md_key] = now_epoch
 
     recent_lsr_products = _fetch_recent_nws_products(NWS_LSR_URL, "NWS LSR", limit=10)
     lsr_reports_checked = 0
@@ -2083,10 +2075,9 @@ def check_forecast_products(force: bool = False):
                 report.get("county", "unknown"),
             )
             lsr_message = format_lsr_post(report)
-            post_to_bluesky(lsr_message)
-            send_telegram_message(lsr_message)
-            history[lsr_key] = now_epoch
-            lsr_reports_posted += 1
+            if _deliver_post(lsr_message, key=lsr_key):
+                history[lsr_key] = now_epoch
+                lsr_reports_posted += 1
 
     if recent_lsr_products and not lsr_reports_checked:
         logging.info("NWS LSR: no recent reports inside the %s-hour window.", LSR_LOOKBACK_HOURS)
@@ -2384,9 +2375,10 @@ def check_river_flood_status(force: bool = False):
                 forecast_stage_text,
             )
             river_message = format_river_status_post(gauge)
-            post_to_bluesky(river_message)
-            send_telegram_message(river_message)
-            gauge_history["last_posted_epoch"] = now_epoch
+            if _deliver_post(river_message):
+                gauge_history["last_posted_epoch"] = now_epoch
+            else:
+                continue
         elif should_post:
             logging.warning("River check %s: update triggered but observed stage is unavailable.", gauge_id)
 
@@ -2666,7 +2658,6 @@ def check_rapid_changes(current_temp_f: float) -> str | None:
     drop = prev_temp - current_temp_f
 
     if drop >= 10.0:
-        _last_rapid_alert_epoch = now_epoch
         prev_time = _friendly_time(datetime.fromtimestamp(prev_t))
         now_time = _friendly_time()
         return (
@@ -2713,8 +2704,7 @@ def send_daily_summary():
         )
 
     # post_to_mastodon(summary_message)
-    post_to_bluesky(summary_message)
-    send_telegram_message(summary_message)
+    return _deliver_post(summary_message, key="summary|" + date_str)
     # post_tweet(summary_message)
 
 
@@ -2723,12 +2713,16 @@ def fetch_station_observation():
     api_token = os.getenv("WEATHERFLOW_API_TOKEN")
     url = f"https://swd.weatherflow.com/swd/rest/observations/station/{station_id}?token={api_token}"
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         data = response.json()
-        return data["obs"][0]
-    except requests.RequestException as e:
-        logging.error(f"Error fetching weather data: {e}")
+        observations = data.get("obs") if isinstance(data, dict) else None
+        if not isinstance(observations, list) or not observations:
+            logging.warning("WeatherFlow returned no observations.")
+            return None
+        return _validate_observation(observations[0])
+    except (requests.RequestException, ValueError) as e:
+        logging.error("Error fetching weather data (%s).", type(e).__name__)
         return None
 
 
@@ -2736,9 +2730,44 @@ def _maybe_send_rapid_change_alert(temp_f: float):
     alert_message = check_rapid_changes(temp_f)
     if alert_message:
         # post_to_mastodon(alert_message)
-        post_to_bluesky(alert_message)
-        send_telegram_message(alert_message)
+        if _deliver_post(alert_message):
+            global _last_rapid_alert_epoch
+            _last_rapid_alert_epoch = time.time()
         # post_tweet(alert_message)
+
+
+def _validate_observation(data):
+    if not isinstance(data, dict):
+        return None
+    result = dict(data)
+    # Required values must never silently turn into calm/freezing conditions.
+    required = ("timestamp", "air_temperature", "wind_avg", "wind_gust", "wind_direction",
+                "precip_accum_last_1hr", "precip_accum_local_day")
+    optional = {"feels_like": data.get("air_temperature"), "relative_humidity": 0,
+                "uv": 0,
+                "lightning_strike_count_last_3hr": 0, "lightning_strike_last_distance": 0}
+    for field in required + tuple(optional):
+        value = _safe_float(data.get(field))
+        if value is None or not math.isfinite(value):
+            if field in required:
+                logging.warning("Invalid required station field: %s", field)
+                return None
+            value = result["air_temperature"] if field == "feels_like" else optional[field]
+        result[field] = value
+    if result["lightning_strike_count_last_3hr"] > 0:
+        distance = _safe_float(data.get("lightning_strike_last_distance"))
+        if distance is None or not math.isfinite(distance) or distance < 0:
+            logging.warning("Skipping lightning observation without a valid distance.")
+            return None
+    strike_epoch = _safe_float(data.get("lightning_strike_last_epoch"))
+    result["lightning_strike_last_epoch"] = (strike_epoch if strike_epoch is not None
+        and math.isfinite(strike_epoch) and 0 < strike_epoch <= time.time() + 60 else None)
+    result["lightning_strike_count_last_3hr"] = int(result["lightning_strike_count_last_3hr"])
+    age = time.time() - result["timestamp"]
+    if age < -60 or age > MAX_OBSERVATION_AGE_SECONDS:
+        logging.warning("Skipping station observation with age %.0f seconds.", age)
+        return None
+    return result
 
 
 def fetch_current_weather_snapshot():
@@ -2764,8 +2793,12 @@ def _build_weather_snapshot(data):
     global current_event_strike_total, last_strike_epoch_global
     global current_rain_event_total, rain_event_baseline, last_rain_epoch_global
     global _latest_weather_snapshot
+    global _previous_rain_total, _previous_rain_date
 
-    observed_at = datetime.now()
+    data = _validate_observation(data)
+    if data is None:
+        return None
+    observed_at = datetime.fromtimestamp(data["timestamp"], PEORIA_TIMEZONE)
     current_date = observed_at.strftime("%Y-%m-%d")
     if current_date != daily_date:
         daily_max_wind_avg = 0.0
@@ -2774,10 +2807,6 @@ def _build_weather_snapshot(data):
         # Reset lightning event info at the start of a new day
         current_event_strike_total = 0
         last_strike_epoch_global = None
-        # Reset rain event info at the start of a new day
-        current_rain_event_total = 0.0
-        rain_event_baseline = None
-        last_rain_epoch_global = None
 
         # Reset daily summary stats at the start of a new day
         global _daily_high_temp_f, _daily_low_temp_f, _daily_rain_total_in
@@ -2818,19 +2847,21 @@ def _build_weather_snapshot(data):
     # Update daily stats for end-of-day summary
     _update_daily_stats(current_temp_f, rain_in_day)
 
-    # Rain event tracking:
-    now_epoch = time.time()
-    if rain_in_day > 0:
-        if (last_rain_epoch_global is None) or ((now_epoch - last_rain_epoch_global) >= 3 * 3600):
-            rain_event_baseline = rain_in_day
-            current_rain_event_total = 0.0
-        else:
-            current_rain_event_total = rain_in_day - (rain_event_baseline if rain_event_baseline is not None else 0.0)
-        last_rain_epoch_global = now_epoch
+    # Only advancing accumulation means new rain; dry polls do not extend events.
+    now_epoch = observed_at.timestamp()
+    if _previous_rain_total is None:
+        increment = 0.0  # Cannot attribute rain before startup to this event.
+    elif _previous_rain_date != current_date or rain_in_day < _previous_rain_total:
+        increment = rain_in_day
     else:
+        increment = max(0.0, rain_in_day - _previous_rain_total)
+    if last_rain_epoch_global is None or now_epoch - last_rain_epoch_global >= 3 * 3600:
         current_rain_event_total = 0.0
-        rain_event_baseline = rain_in_day
+    if increment > 0:
+        current_rain_event_total += increment
         last_rain_epoch_global = now_epoch
+    _previous_rain_total = rain_in_day
+    _previous_rain_date = current_date
 
     # Retrieve lightning data
     lightning_count = data.get("lightning_strike_count_last_3hr", 0)
@@ -2965,16 +2996,102 @@ def format_weather_post(snapshot: dict, post_mode: str = "routine", followup_rea
 
 def format_weather_data(data, post_mode: str = "routine", followup_reason: str | None = None):
     snapshot = _build_weather_snapshot(data)
-    return format_weather_post(snapshot, post_mode=post_mode, followup_reason=followup_reason)
+    return format_weather_post(snapshot, post_mode=post_mode, followup_reason=followup_reason) if snapshot else None
+
+
+DELIVERY_STATE_FILE = os.path.join(SCRIPT_DIR, "delivery_state.json")
+_delivery_state = None
+_pending_commands = deque()
+HTTP_TIMEOUT = (5, 20)
+MAX_OBSERVATION_AGE_SECONDS = 15 * 60
+
+
+def _save_delivery_state():
+    temp_path = DELIVERY_STATE_FILE + ".tmp"
+    with open(temp_path, "w") as file:
+        json.dump(_delivery_state, file)
+    os.replace(temp_path, DELIVERY_STATE_FILE)
+
+
+def _deliver_post(message, image_url=None, alt_text="", key=None):
+    """Remember each successful destination so a retry only sends missing copies."""
+    global _delivery_state
+    if _delivery_state is None:
+        try:
+            with open(DELIVERY_STATE_FILE) as file:
+                _delivery_state = json.load(file)
+        except (OSError, ValueError):
+            _delivery_state = {}
+    delivery_key = key or hashlib.sha256(message.encode()).hexdigest()
+    now = time.time()
+    _delivery_state = {k: v for k, v in _delivery_state.items()
+                       if now - v.get("created", 0) < 86400}
+    entry = _delivery_state.setdefault(delivery_key, {
+        "created": now, "message": message, "image_url": image_url,
+        "alt_text": alt_text, "delivered": [],
+    })
+    targets = {}
+    if session is not None or os.getenv("BSKY_HANDLE"):
+        targets["bluesky"] = lambda: (post_to_bluesky_with_official_image(
+            entry["message"], entry["image_url"], entry["alt_text"])
+            if entry["image_url"] else post_to_bluesky(entry["message"]))
+    if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+        targets["telegram"] = lambda: (send_telegram_photo(entry["message"], entry["image_url"])
+            if entry["image_url"] else send_telegram_message(entry["message"]))
+    for target, send in targets.items():
+        if target not in entry["delivered"]:
+            if send():
+                entry["delivered"].append(target)
+            try:
+                _save_delivery_state()
+            except OSError:
+                logging.exception("Could not persist delivery status.")
+    entry["complete"] = bool(targets) and all(target in entry["delivered"] for target in targets)
+    try:
+        _save_delivery_state()
+    except OSError:
+        logging.exception("Could not persist delivery completion.")
+    return entry["complete"]
+
+
+def _retry_pending_deliveries():
+    global _delivery_state
+    if _delivery_state is None:
+        try:
+            with open(DELIVERY_STATE_FILE) as file:
+                _delivery_state = json.load(file)
+        except (OSError, ValueError):
+            _delivery_state = {}
+    # Never replay old weather/alerts after a long outage.
+    for key, entry in list(_delivery_state.items()):
+        if entry.get("complete") or time.time() - entry.get("created", 0) > 15 * 60:
+            continue
+        if _deliver_post(entry["message"], entry.get("image_url"), entry.get("alt_text", ""), key):
+            context = entry.get("weather_context")
+            if context:
+                snapshot = _deserialize_snapshot(context["snapshot"])
+                if not _last_posted_weather_snapshot or snapshot["observed_at"].timestamp() >= _last_posted_weather_snapshot["observed_at"].timestamp():
+                    _record_weather_post(snapshot, context["mode"])
+                    date_text = snapshot["observed_at"].strftime("%Y-%m-%d")
+                    if context["mode"] == "sunrise_notice":
+                        _record_sunrise_notice(date_text)
+                    elif context["mode"] == "sunset_notice":
+                        _record_sunset_notice(date_text)
 
 
 def post_weather_update(weather_message: str, snapshot: dict, post_mode: str):
     logging.info("Sending %s weather post (%s).", post_mode, _snapshot_log_summary(snapshot))
     # post_to_mastodon(weather_message)
-    post_to_bluesky(weather_message)
-    send_telegram_message(weather_message)
-    # post_tweet(weather_message)
+    if not _deliver_post(weather_message):
+        key = hashlib.sha256(weather_message.encode()).hexdigest()
+        _delivery_state[key]["weather_context"] = {"snapshot": _serialize_snapshot(snapshot), "mode": post_mode}
+        try:
+            _save_delivery_state()
+        except OSError:
+            logging.exception("Could not persist pending weather post.")
+        return False
     _record_weather_post(snapshot, post_mode)
+    return True
 
 
 def check_storm_follow_up():
@@ -3005,8 +3122,8 @@ def check_storm_follow_up():
         return
 
     weather_message = format_weather_post(snapshot, post_mode="storm_followup", followup_reason=reason)
-    post_weather_update(weather_message, snapshot, "storm_followup")
-    _last_storm_follow_up_epoch = time.time()
+    if post_weather_update(weather_message, snapshot, "storm_followup"):
+        _last_storm_follow_up_epoch = time.time()
 
 
 def check_sunrise_notice(now: datetime | None = None):
@@ -3035,8 +3152,8 @@ def check_sunrise_notice(now: datetime | None = None):
         _sunrise_detail_line(now),
     )
     weather_message = _format_sunrise_notice(snapshot, now)
-    post_weather_update(weather_message, snapshot, "sunrise_notice")
-    _record_sunrise_notice(today)
+    if post_weather_update(weather_message, snapshot, "sunrise_notice"):
+        _record_sunrise_notice(today)
 
 
 def check_sunset_notice(now: datetime | None = None):
@@ -3065,8 +3182,8 @@ def check_sunset_notice(now: datetime | None = None):
         _sunset_detail_line(now),
     )
     weather_message = _format_sunset_notice(snapshot, now)
-    post_weather_update(weather_message, snapshot, "sunset_notice")
-    _record_sunset_notice(today)
+    if post_weather_update(weather_message, snapshot, "sunset_notice"):
+        _record_sunset_notice(today)
 
 
 # Functions to post to social media platforms
@@ -3170,7 +3287,7 @@ def send_heartbeat():
         return
 
     try:
-        requests.get(url).raise_for_status()
+        requests.get(url, timeout=HTTP_TIMEOUT).raise_for_status()
         logging.info("Heartbeat sent successfully for %s.", _friendly_time())
     except requests.RequestException as e:
         logging.error(f"Heartbeat: Sending failed. Error: {e}")
@@ -3189,6 +3306,10 @@ def send_heartbeat():
 #
 # This will trigger the force_update() function.
 def force_update(signum, frame):
+    _pending_commands.append("weather")
+
+
+def _force_update():
     logging.info("Force update signal received.")
     snapshot = fetch_current_weather_snapshot()
     if snapshot:
@@ -3218,7 +3339,7 @@ def _load_control_command() -> str | None:
 
 def _run_control_command(command: str):
     if command in {"weather", "routine", "force"}:
-        force_update(None, None)
+        _force_update()
     elif command in {"alerts", "nws"}:
         check_nws_alerts(force=True)
     elif command == "spc":
@@ -3248,12 +3369,20 @@ def _run_control_command(command: str):
 
 
 def run_control_command(signum, frame):
-    command = _load_control_command()
-    if not command:
-        return
+    _pending_commands.append("control_file")
 
-    logging.info("Control command signal received: %s", command)
-    _run_control_command(command)
+
+def _drain_control_commands():
+    # Limit work per cycle so repeated signals cannot starve scheduled checks.
+    for _ in range(min(len(_pending_commands), 10)):
+        command = _pending_commands.popleft()
+        try:
+            if command == "control_file":
+                command = _load_control_command()
+            if command:
+                _run_control_command(command)
+        except Exception:
+            logging.exception("Manual command failed: %s", command)
 
 
 # Register the signal handlers for manual control.
@@ -3265,6 +3394,8 @@ _load_post_state()
 # Scheduler function that runs the weather bot at defined intervals
 def scheduler():
     while True:
+        _drain_control_commands()
+        _retry_pending_deliveries()
         now = datetime.now(PEORIA_TIMEZONE)
         minute = now.minute
         hour = now.hour
@@ -3283,8 +3414,8 @@ def scheduler():
         # Daily summary at 23:59 (once per day)
         global _last_daily_summary_date
         if hour == 23 and minute == 59 and _last_daily_summary_date != today:
-            send_daily_summary()
-            _last_daily_summary_date = today
+            if send_daily_summary():
+                _last_daily_summary_date = today
             # Sleep briefly to avoid double-send within the same minute
             time.sleep(61)
             continue

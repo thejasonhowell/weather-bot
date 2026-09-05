@@ -19,6 +19,8 @@ last_conditions.json
 alert_history.json
 river_history.json
 post_state.json
+delivery_state.json
+delivery_state.json.tmp
 
 # Local scripts/backups and scratch files
 *backup*.py
